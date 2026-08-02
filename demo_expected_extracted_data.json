@@ -1,0 +1,55 @@
+{
+  "certificate": {
+    "company": "GN ALTECH PRIVATE LIMITED",
+    "customer": "Apex Engineering Private Limited",
+    "part_name": "Ductile Iron Pump Housing",
+    "part_no": "PH-801",
+    "quantity": "801 Nos.",
+    "daily_heat_no": "A6A",
+    "monthly_heat_no": "AY-001",
+    "yearly_heat_no": "2026",
+    "batch_no": "B-0726-04",
+    "material": "SG Iron / Ductile Iron",
+    "grade": "IS 1865 SG 500/7",
+    "certificate_no": "TC-2026-000184",
+    "certificate_date": "28.07.2026",
+    "invoice_no": "INV-2026-0814",
+    "invoice_date": "28.07.2026",
+    "delivery_condition": "As Cast"
+  },
+  "chemical": {
+    "C_PERCENT": "3.070",
+    "SI_PERCENT": "1.700",
+    "MN_PERCENT": "0.742",
+    "P_PERCENT": "0.057",
+    "S_PERCENT": "0.080",
+    "CR_PERCENT": "0.320",
+    "MG_PERCENT": "0.045",
+    "CU_PERCENT": "0.576",
+    "SN_PERCENT": "0.046",
+    "MO_PERCENT": "0.000",
+    "OVERALL_RESULT": "PASS"
+  },
+  "mechanical": {
+    "YIELD_STRENGTH": "320",
+    "YIELD_UNIT": "N/mm2",
+    "UTS": "520",
+    "UTS_UNIT": "N/mm2",
+    "ELONGATION": "8.5",
+    "ELONGATION_UNIT": "%",
+    "HARDNESS": "238",
+    "HARDNESS_UNIT": "BHN",
+    "OVERALL_RESULT": "PASS"
+  },
+  "micro_structure": {
+    "AVERAGE_NODULARITY": "85",
+    "NODULARITY_UNIT": "%",
+    "NODULE_COUNT": "180",
+    "NODULE_COUNT_UNIT": "per mm2",
+    "PEARLITE": "40",
+    "FERRITE": "60",
+    "CARBIDE": "NIL",
+    "OVERALL_RESULT": "PASS"
+  },
+  "expected_overall_result": "PASS"
+}
