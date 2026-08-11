@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuthStore } from '@/stores/authStore'
+import { ROLE_LABELS } from '@/lib/permissions'
 import { useNavigate } from 'react-router-dom'
 
 export function TopBar() {
@@ -43,7 +44,7 @@ export function TopBar() {
             <DropdownMenuLabel>
               {user?.name ?? 'Demo User'}
               <span className="block text-xs font-normal text-muted-foreground">
-                {user?.isDemo ? 'Demo Mode' : user?.role}
+                {user?.isDemo ? 'Demo Mode' : (user ? ROLE_LABELS[user.role] : '')}
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

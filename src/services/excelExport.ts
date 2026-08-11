@@ -1,139 +1,125 @@
 import * as XLSX from 'xlsx'
-import type { Certificate } from '@/types'
-import { certificateFileName, getCertificateDisplayParts } from '@/lib/factories'
-import { useClientStore } from '@/stores/clientStore'
+import type { Certificate, MasterSection } from '@/types'
+import { sampleContexts, reportFor } from '@/lib/certificateStatus'
+import { validateValue } from '@/lib/validation'
+import { matchParameter } from '@/lib/validation'
+import { certificateFileName } from '@/lib/certificateNo'
+import { useHeatRecordStore } from '@/stores/heatRecordStore'
+import { useAuditStore } from '@/stores/auditStore'
 
-function headerRows(cert: Certificate): string[][] {
-  const client = useClientStore.getState().getClient(cert.clientId)
-  return [
+export function exportCertificateToExcel(certificate: Certificate): void {
+  const cert = certificate
+  const snap = cert.productSnapshot
+  const heatRecords = useHeatRecordStore.getState().heatRecords
+  const auditLogs = useAuditStore.getState().getLogs()
+
+  const wb = XLSX.utils.book_new()
+
+  const summary: (string | number)[][] = [
     ['GN ALTECH PRIVATE LIMITED - TEST CERTIFICATE'],
     [],
     ['Field', 'Value'],
     ['Certificate Number', cert.certificateNumber],
     ['Certificate Date', cert.certificateDate],
-    ['Customer / Client', client?.name ?? cert.clientId],
+    ['SAP No.', snap?.sapNo ?? ''],
+    ['Part No.', snap?.partNo ?? ''],
+    ['Description', snap?.description ?? ''],
+    ['Material', snap?.material ?? ''],
+    ['Grade', snap?.grade ?? ''],
+    ['Customer', snap?.customer ?? ''],
+    ['Master Revision', snap?.revision ?? ''],
     ['Invoice / Challan Number', cert.invoiceNumber ?? ''],
     ['Invoice Date', cert.invoiceDate ?? ''],
     ['Delivery Condition', cert.deliveryCondition ?? ''],
-    ['Material', cert.material ?? ''],
-    ['Grade', cert.grade ?? ''],
-    ['Format Number', cert.formatNumber ?? ''],
-    ['Revision No. & Date', cert.revisionText ?? ''],
-    ['Standard Reference', cert.standardReference ?? ''],
-    ['License Number', cert.licenseNumber ?? ''],
     ['Status', cert.status],
   ]
-}
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Certificate Summary')
 
-function partsRows(cert: Certificate): string[][] {
-  const rows: string[][] = [
-    ['Sr. No.', 'Qty.', 'Part No.', 'Description', 'Daily Heat No.', 'Monthly Heat No.', 'Yearly Heat No.', 'Batch No.'],
+  const heatRows: (string | number)[][] = [
+    ['Sr. No.', 'SAP No.', 'Part No.', 'Description', 'Heat Code', 'Batch No.', 'Sample', 'Status'],
   ]
-  const displayParts = getCertificateDisplayParts(cert)
-  displayParts.forEach((p, i) => {
-    rows.push([
-      String(i + 1),
-      p.quantity,
-      p.partNumber,
-      p.description,
-      p.dailyHeatNumber,
-      p.monthlyHeatNumber ?? '',
-      p.yearlyHeatNumber ?? '',
-      p.batchNumber ?? '',
-    ])
+  cert.selectedHeats.forEach((selection, i) => {
+    const contexts = sampleContexts(selection, heatRecords)
+    if (contexts.length === 0) {
+      heatRows.push([i + 1, snap?.sapNo ?? '', snap?.partNo ?? '', snap?.description ?? '', selection.heatCode, selection.batchNo ?? '', 'Heat Code Only', selection.heatCodeOnly ? 'Heat Code Only' : ''])
+    } else {
+      contexts.forEach((ctx) => {
+        heatRows.push([i + 1, snap?.sapNo ?? '', snap?.partNo ?? '', snap?.description ?? '', selection.heatCode, selection.batchNo ?? '', ctx.label, selection.heatCodeOnly ? 'Heat Code Only' : ''])
+      })
+    }
   })
-  return rows
-}
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(heatRows), 'Heat Summary')
 
-function sectionRows(title: string, rows: Certificate['chemicalRows']): string[][] {
-  const out: string[][] = [[title]]
-  out.push(['Parameter', 'Specified Minimum', 'Specified Maximum', 'Observed', 'Unit', 'Result'])
-  for (const r of rows) {
-    out.push([
-      r.label,
-      r.minimum ?? '',
-      r.maximum ?? '',
-      r.observed ?? '',
-      r.unit ?? '',
-      r.result,
-    ])
+  const sections = snap?.sections ?? []
+  for (const section of sections) {
+    const rows: (string | number)[][] = [
+      [section.name.toUpperCase()],
+      ['Heat Code', 'Sample', 'Parameter', 'Master Specification', 'Observed', 'Unit', 'Result'],
+    ]
+    for (const selection of cert.selectedHeats) {
+      const contexts = sampleContexts(selection, heatRecords)
+      for (const ctx of contexts) {
+        const report = reportFor(selection, section.key, ctx.sampleId)
+        const parsed = report?.parsedValues ?? []
+        section.parameters.forEach((p) => {
+          const found = parsed.find((v) => matchParameter(p, v.name))
+          const value = found?.value ?? ''
+          const outcome = value ? validateValue(p, value) : undefined
+          rows.push([
+            selection.heatCode,
+            selection.heatCodeOnly ? 'Heat Code Only' : ctx.label,
+            p.name,
+            specFor(p),
+            value,
+            p.unit ?? '',
+            outcome ? outcome.result.replace('_', ' ') : 'PENDING',
+          ])
+        })
+      }
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    ws['!cols'] = [
+      { wch: 12 },
+      { wch: 12 },
+      { wch: 26 },
+      { wch: 26 },
+      { wch: 16 },
+      { wch: 8 },
+      { wch: 12 },
+    ]
+    XLSX.utils.book_append_sheet(wb, ws, sheetNameFor(section))
   }
-  return out
+
+  const auditRows: (string | number)[][] = [
+    ['Audit Trail'],
+    ['Timestamp', 'User', 'Action', 'Entity'],
+  ]
+  for (const log of auditLogs) {
+    auditRows.push([log.timestamp, log.userId, log.action, log.entityType])
+  }
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(auditRows), 'Audit')
+
+  XLSX.writeFile(wb, `${certificateFileName(cert)}.xlsx`)
 }
 
-export function exportCertificateToExcel(certificate: Certificate): void {
-  const wb = XLSX.utils.book_new()
+function specFor(p: { ruleType: string; min?: string; max?: string; expectedValue?: string; sourceText?: string }): string {
+  if (p.sourceText) return p.sourceText
+  switch (p.ruleType) {
+    case 'Range':
+      return `${p.min ?? '?'} - ${p.max ?? '?'}`
+    case 'Minimum':
+      return `${p.min ?? '?'} Min.`
+    case 'Maximum':
+      return `${p.max ?? '?'} Max.`
+    case 'ExactNumber':
+    case 'ExactText':
+      return p.expectedValue ?? '—'
+    default:
+      return 'Info'
+  }
+}
 
-  const header = XLSX.utils.aoa_to_sheet(headerRows(certificate))
-  header['!cols'] = [{ wch: 28 }, { wch: 40 }]
-  XLSX.utils.book_append_sheet(wb, header, 'Certificate')
-
-  const parts = XLSX.utils.aoa_to_sheet(partsRows(certificate))
-  parts['!cols'] = [
-    { wch: 8 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 32 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 14 },
-  ]
-  XLSX.utils.book_append_sheet(wb, parts, 'Parts')
-
-  const chemical = XLSX.utils.aoa_to_sheet(sectionRows('CHEMICAL ANALYSIS', certificate.chemicalRows))
-  chemical['!cols'] = [
-    { wch: 26 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 10 },
-    { wch: 12 },
-  ]
-  XLSX.utils.book_append_sheet(wb, chemical, 'Chemical')
-
-  const mechanical = XLSX.utils.aoa_to_sheet(sectionRows('MECHANICAL PROPERTIES', certificate.mechanicalRows))
-  mechanical['!cols'] = [
-    { wch: 30 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 10 },
-    { wch: 12 },
-  ]
-  XLSX.utils.book_append_sheet(wb, mechanical, 'Mechanical')
-
-  const micro = XLSX.utils.aoa_to_sheet(sectionRows('MICRO STRUCTURE', certificate.microStructureRows))
-  micro['!cols'] = [
-    { wch: 26 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 12 },
-  ]
-  XLSX.utils.book_append_sheet(wb, micro, 'Micro Structure')
-
-  const additional = XLSX.utils.aoa_to_sheet([
-    ['Additional Test', 'Result'],
-    ...certificate.additionalTests.map((t) => [t.label, t.value]),
-  ])
-  additional['!cols'] = [{ wch: 40 }, { wch: 34 }]
-  XLSX.utils.book_append_sheet(wb, additional, 'Additional Tests')
-
-  const remarks = XLSX.utils.aoa_to_sheet([
-    ['Remarks'],
-    [certificate.remarks ?? ''],
-    [],
-    ['Certification Statement'],
-    [certificate.certificationStatement ?? ''],
-    [],
-    ['Tested By', certificate.testedBy ?? ''],
-    ['Reviewed By', certificate.reviewedBy ?? ''],
-    ['Approved By', certificate.approvedBy ?? ''],
-  ])
-  remarks['!cols'] = [{ wch: 30 }, { wch: 40 }]
-  XLSX.utils.book_append_sheet(wb, remarks, 'Remarks')
-
-  XLSX.writeFile(wb, `${certificateFileName(certificate)}.xlsx`)
+function sheetNameFor(section: MasterSection): string {
+  const name = section.name.replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31)
+  return name || section.key
 }

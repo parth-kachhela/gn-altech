@@ -22,13 +22,18 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
+import { deleteImportDraft } from '@/lib/importDraftStorage'
 
 const STORE_KEYS = [
-  'gn-alt-certificates',
+  'gn-alt-product-masters',
   'gn-alt-heat-records',
+  'gn-alt-certificates',
+  'gn-alt-department-requests',
+  'gn-alt-audit',
+  'gn-alt-users',
+  'gn-alt-auth',
   'gn-alt-settings',
   'gn-alt-theme',
-  'gn-alt-auth',
 ]
 
 async function fileToResizedDataUrl(file: File, maxWidth = 400): Promise<string> {
@@ -81,18 +86,12 @@ export function SettingsPage() {
     applyTheme()
   }
 
-  const doResetDemo = () => {
+  const doClearAll = async (resetDemo: boolean) => {
     for (const key of STORE_KEYS) localStorage.removeItem(key)
+    await deleteImportDraft()
     setConfirmReset(null)
-    toast.success('Demo data will be re-seeded on reload')
-    window.location.href = '/dashboard'
-  }
-
-  const doClearAll = () => {
-    for (const key of STORE_KEYS) localStorage.removeItem(key)
-    setConfirmReset(null)
-    toast.success('All data cleared')
-    window.location.href = '/login'
+    toast.success(resetDemo ? 'All data cleared' : 'All data cleared')
+    window.location.href = resetDemo ? '/dashboard' : '/login'
   }
 
   return (
@@ -249,7 +248,7 @@ export function SettingsPage() {
                 onClick={() => setConfirmReset('reset')}
               >
                 <Database className="h-4 w-4" />
-                Re-seed Demo Data
+                Reset Data
               </Button>
               <Button
                 variant="destructive"
@@ -279,21 +278,21 @@ export function SettingsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirmReset === 'reset' ? 'Re-seed demo data?' : 'Clear all data?'}
+              {confirmReset === 'reset' ? 'Reset all data?' : 'Clear all data?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmReset === 'reset'
-                ? 'All certificates, heat records and settings will be wiped and the demo data will be re-seeded on reload.'
-                : 'All certificates, heat records, settings and the login session will be permanently removed from this browser.'}
+                ? 'All product masters, heat records, certificates, department requests, audit logs and users will be wiped from this browser. You will need to import the master workbook again.'
+                : 'All product masters, heat records, certificates, department requests, audit logs, users and the login session will be permanently removed from this browser.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className={confirmReset === 'clear' ? 'bg-destructive text-destructive-foreground' : ''}
-              onClick={confirmReset === 'reset' ? doResetDemo : doClearAll}
+              onClick={() => doClearAll(confirmReset === 'reset')}
             >
-              {confirmReset === 'reset' ? 'Re-seed' : 'Clear'}
+              {confirmReset === 'reset' ? 'Reset' : 'Clear'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

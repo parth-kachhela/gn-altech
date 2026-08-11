@@ -1,13 +1,13 @@
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { useAuthStore } from '@/stores/authStore'
-import { useSeedDemo } from '@/hooks/useSeedDemo'
 import { LoginPage } from '@/pages/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
-import { ClientsPage } from '@/pages/ClientsPage'
-import { ClientFormPage } from '@/pages/ClientFormPage'
-import { ItemsPage } from '@/pages/ItemsPage'
-import { ItemFormPage } from '@/pages/ItemFormPage'
+import { ProductMastersPage } from '@/pages/ProductMastersPage'
+import { ProductMasterDetailPage } from '@/pages/ProductMasterDetailPage'
+import { MasterImportPage } from '@/pages/MasterImportPage'
+import { DepartmentRequestsPage } from '@/pages/DepartmentRequestsPage'
+import { DepartmentInboxPage } from '@/pages/DepartmentInboxPage'
 import { HeatRecordsPage } from '@/pages/HeatRecordsPage'
 import { HeatRecordNewPage } from '@/pages/HeatRecordNewPage'
 import { HeatRecordDetailPage } from '@/pages/HeatRecordDetailPage'
@@ -18,10 +18,10 @@ import { CertificateDetailPage } from '@/pages/CertificateDetailPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { RequireCapability } from '@/components/RoleGuard'
 
 function ProtectedLayout() {
   const user = useAuthStore((s) => s.user)
-  useSeedDemo()
   if (!user) {
     return <Navigate to="/login" replace />
   }
@@ -38,25 +38,25 @@ function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<DashboardPage />} />
 
-            <Route path="clients" element={<ClientsPage />} />
-            <Route path="clients/new" element={<ClientFormPage />} />
-            <Route path="clients/:id/edit" element={<ClientFormPage />} />
+            <Route path="product-masters" element={<RequireCapability capability="manageProductMaster"><ProductMastersPage /></RequireCapability>} />
+            <Route path="product-masters/import" element={<RequireCapability capability="manageProductMaster"><MasterImportPage /></RequireCapability>} />
+            <Route path="product-masters/:id" element={<RequireCapability capability="manageProductMaster"><ProductMasterDetailPage /></RequireCapability>} />
+            <Route path="product-masters/:id/edit" element={<RequireCapability capability="manageProductMaster"><ProductMasterDetailPage /></RequireCapability>} />
 
-            <Route path="items" element={<ItemsPage />} />
-            <Route path="items/new" element={<ItemFormPage />} />
-            <Route path="items/:id/edit" element={<ItemFormPage />} />
-
-            <Route path="heat-records" element={<HeatRecordsPage />} />
-            <Route path="heat-records/new" element={<HeatRecordNewPage />} />
-            <Route path="heat-records/:id" element={<HeatRecordDetailPage />} />
-            <Route path="heat-records/:id/edit" element={<HeatRecordEditPage />} />
+            <Route path="heat-records" element={<RequireCapability capability="manageHeatRecords"><HeatRecordsPage /></RequireCapability>} />
+            <Route path="heat-records/new" element={<RequireCapability capability="manageHeatRecords"><HeatRecordNewPage /></RequireCapability>} />
+            <Route path="heat-records/:id" element={<RequireCapability capability="manageHeatRecords"><HeatRecordDetailPage /></RequireCapability>} />
+            <Route path="heat-records/:id/edit" element={<RequireCapability capability="manageHeatRecords"><HeatRecordEditPage /></RequireCapability>} />
 
             <Route path="certificates" element={<CertificatesPage />} />
-            <Route path="certificates/new" element={<CertificateWizardPage />} />
+            <Route path="certificates/new" element={<RequireCapability capability="createCertificate"><CertificateWizardPage /></RequireCapability>} />
             <Route path="certificates/:id" element={<CertificateDetailPage />} />
-            <Route path="certificates/:id/edit" element={<CertificateWizardPage />} />
+            <Route path="certificates/:id/edit" element={<RequireCapability capability="createCertificate"><CertificateWizardPage /></RequireCapability>} />
 
-            <Route path="settings" element={<SettingsPage />} />
+            <Route path="departments" element={<RequireCapability capability="viewDepartmentRequests"><DepartmentRequestsPage /></RequireCapability>} />
+            <Route path="departments/inbox" element={<RequireCapability capability="uploadReports"><DepartmentInboxPage /></RequireCapability>} />
+
+            <Route path="settings" element={<RequireCapability capability="accessSettings"><SettingsPage /></RequireCapability>} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>

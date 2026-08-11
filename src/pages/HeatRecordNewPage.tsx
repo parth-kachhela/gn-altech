@@ -1,26 +1,20 @@
 import { useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/PageHeader'
 import { HeatRecordForm } from '@/components/heat-records/HeatRecordForm'
-import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { toast } from 'sonner'
+import { useHeatRecordsHydrated } from '@/hooks/useHydrated'
+import { LoadingPage } from '@/components/EmptyState'
 
 export function HeatRecordNewPage() {
   const navigate = useNavigate()
-  const addHeatRecord = useHeatRecordStore((s) => s.addHeatRecord)
-
+  const hydrated = useHeatRecordsHydrated()
+  if (!hydrated) return <LoadingPage label="Loading…" />
   return (
     <div>
       <PageHeader
         title="New Heat Record"
-        description="Enter heat numbers manually as provided by the factory."
+        description="Create a heat code linked to an SAP product master."
       />
-      <HeatRecordForm
-        onSubmit={(values) => {
-          const id = addHeatRecord(values)
-          toast.success('Heat record created')
-          navigate(`/heat-records/${id}`)
-        }}
-      />
+      <HeatRecordForm onSaved={(id) => navigate(`/heat-records/${id}`)} />
     </div>
   )
 }

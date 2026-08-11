@@ -1,6 +1,6 @@
 import { pdf } from '@react-pdf/renderer'
 import type { Certificate } from '@/types'
-import { certificateFileName } from '@/lib/factories'
+import { certificateFileName } from '@/lib/certificateNo'
 import { TestCertificateDocument } from '@/components/pdf/TestCertificateDocument'
 
 export async function generateCertificateBlob(

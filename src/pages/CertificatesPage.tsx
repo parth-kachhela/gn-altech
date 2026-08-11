@@ -1,16 +1,11 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { FileText, Plus, Search, Sparkles } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { FileText, Plus, Search, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState } from '@/components/EmptyState'
-import { useCertificateStore } from '@/stores/certificateStore'
-import { useClientStore } from '@/stores/clientStore'
-import { useItemStore } from '@/stores/itemStore'
-import { useCertificatesHydrated } from '@/hooks/useHydrated'
-import { useNavigate } from 'react-router-dom'
-import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
 import {
   Table,
   TableBody,
@@ -19,7 +14,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { CertificateStatusBadge } from '@/components/StatusBadge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,49 +30,46 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useState as useDeleteState } from 'react'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { toast } from 'sonner'
+import { useCertificateStore } from '@/stores/certificateStore'
+import { useHeatRecordStore } from '@/stores/heatRecordStore'
+import { useAuditStore } from '@/stores/auditStore'
+import { useAuthStore } from '@/stores/authStore'
+import { getCapabilities } from '@/lib/permissions'
+import { useCertificatesHydrated } from '@/hooks/useHydrated'
+import { deriveCertificateStatus } from '@/lib/certificateStatus'
+import { CertificateStatusBadge } from '@/components/certificate-flow/ReportStatusBadge'
 
 export function CertificatesPage() {
   const navigate = useNavigate()
   const hydrated = useCertificatesHydrated()
   const certificates = useCertificateStore((s) => s.certificates)
   const deleteCertificate = useCertificateStore((s) => s.deleteCertificate)
-  const loadA6ADemo = useCertificateStore((s) => s.loadA6ADemo)
+  const heatRecords = useHeatRecordStore((s) => s.heatRecords)
+  const addLog = useAuditStore((s) => s.addLog)
+  const user = useAuthStore((s) => s.user)
+  const caps = getCapabilities(user?.role)
   const [query, setQuery] = useState('')
-  const [deleteTarget, setDeleteTarget] = useDeleteState<{ id: string; number: string } | null>(null)
-  const clients = useClientStore((s) => s.getClients())
-  const items = useItemStore((s) => s.getItems())
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; number: string } | null>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return certificates
     return certificates.filter((c) => {
-      const client = clients.find((cl) => cl.id === c.clientId)
-      const firstItem = c.items[0]
-      const itemData = firstItem ? items.find((it) => it.id === firstItem.itemId) : undefined
+      const snap = c.productSnapshot
+      const heats = c.selectedHeats.map((s) => s.heatCode).join(' ')
       return [
         c.certificateNumber,
-        client?.name,
-        itemData?.name,
-        itemData?.partNumber,
+        snap?.sapNo,
+        snap?.partNo,
+        snap?.description,
+        snap?.customer,
+        heats,
       ]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q))
     })
-  }, [certificates, query, clients, items])
-
-  const handleA6A = () => {
-    const id = loadA6ADemo()
-    toast.success('A6A demo certificate loaded')
-    navigate(`/certificates/${id}`)
-  }
+  }, [certificates, query])
 
   if (!hydrated) {
     return (
@@ -91,20 +88,16 @@ export function CertificatesPage() {
     <div>
       <PageHeader
         title="Certificates"
-        description="Create, edit and issue test certificates."
+        description="Create, edit and issue test certificates from SAP product masters."
         actions={
-          <>
-            <Button variant="outline" onClick={handleA6A}>
-              <Sparkles className="h-4 w-4 text-amber-500" />
-              Load A6A Demo
-            </Button>
+          caps.createCertificate ? (
             <Button asChild>
               <Link to="/certificates/new">
                 <Plus className="h-4 w-4" />
                 New Certificate
               </Link>
             </Button>
-          </>
+          ) : null
         }
       />
 
@@ -112,7 +105,7 @@ export function CertificatesPage() {
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search cert no., client, item part no.…"
+            placeholder="Search cert no., SAP No., part no., customer…"
             className="pl-9"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -124,14 +117,20 @@ export function CertificatesPage() {
         <EmptyState
           icon={<FileText className="h-8 w-8" />}
           title={query ? 'No matching certificates' : 'No certificates yet'}
-          description="Create a certificate to begin the test certificate workflow."
+          description={
+            query
+              ? 'Try a different search term.'
+              : 'Create a certificate from a SAP product master and heat codes.'
+          }
           action={
-            <Button asChild>
-              <Link to="/certificates/new">
-                <Plus className="h-4 w-4" />
-                New Certificate
-              </Link>
-            </Button>
+            caps.createCertificate ? (
+              <Button asChild>
+                <Link to="/certificates/new">
+                  <Plus className="h-4 w-4" />
+                  New Certificate
+                </Link>
+              </Button>
+            ) : null
           }
         />
       ) : (
@@ -141,8 +140,10 @@ export function CertificatesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Cert No.</TableHead>
-                  <TableHead>Client</TableHead>
-                  <TableHead>Item</TableHead>
+                  <TableHead>SAP No.</TableHead>
+                  <TableHead>Part / Description</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Heat Codes</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-32">Actions</TableHead>
@@ -150,16 +151,32 @@ export function CertificatesPage() {
               </TableHeader>
               <TableBody>
                 {filtered.map((cert) => {
-                  const client = clients.find((c) => c.id === cert.clientId)
-                  const firstItem = cert.items?.[0]
-                  const itemData = firstItem ? items.find((i) => i.id === firstItem.itemId) : undefined
+                  const status = deriveCertificateStatus(cert, heatRecords)
+                  const snap = cert.productSnapshot
                   return (
                     <TableRow key={cert.id} className="cursor-pointer" onClick={() => navigate(`/certificates/${cert.id}`)}>
                       <TableCell className="font-medium">{cert.certificateNumber || '—'}</TableCell>
-                      <TableCell>{client?.name ?? cert.clientId}</TableCell>
-                      <TableCell>{itemData?.name ?? firstItem?.itemId ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs">{snap?.sapNo || '—'}</TableCell>
+                      <TableCell className="max-w-[200px] truncate">
+                        {snap?.partNo} · {snap?.description}
+                      </TableCell>
+                      <TableCell>{snap?.customer || '—'}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {cert.selectedHeats.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            cert.selectedHeats.slice(0, 3).map((s) => (
+                              <Badge key={s.id} variant="outline" className="font-mono">{s.heatCode}</Badge>
+                            ))
+                          )}
+                          {cert.selectedHeats.length > 3 ? (
+                            <Badge variant="outline">+{cert.selectedHeats.length - 3}</Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell>{cert.certificateDate}</TableCell>
-                      <TableCell><CertificateStatusBadge value={cert.status} /></TableCell>
+                      <TableCell><CertificateStatusBadge value={status} /></TableCell>
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -174,22 +191,26 @@ export function CertificatesPage() {
                                 View
                               </Link>
                             </DropdownMenuItem>
-                            <DropdownMenuItem asChild onClick={(e) => e.stopPropagation()}>
-                              <Link to={`/certificates/${cert.id}/edit`}>
-                                <Pencil className="h-4 w-4 mr-2" />
-                                Edit
-                              </Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setDeleteTarget({ id: cert.id, number: cert.certificateNumber })
-                              }}
-                              className="gap-2 text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
+                            {caps.createCertificate ? (
+                              <DropdownMenuItem asChild onClick={(e) => e.stopPropagation()}>
+                                <Link to={`/certificates/${cert.id}/edit`}>
+                                  <Pencil className="h-4 w-4 mr-2" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                            ) : null}
+                            {caps.deleteCertificate ? (
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setDeleteTarget({ id: cert.id, number: cert.certificateNumber })
+                                }}
+                                className="gap-2 text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            ) : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -205,8 +226,8 @@ export function CertificatesPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete certificate?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will permanently delete certificate <span className="font-semibold">{deleteTarget?.number}</span>.
-                  This action cannot be undone.
+                  This will permanently delete certificate{' '}
+                  <span className="font-semibold">{deleteTarget?.number}</span>. This action cannot be undone.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -216,6 +237,7 @@ export function CertificatesPage() {
                   onClick={() => {
                     if (deleteTarget) {
                       deleteCertificate(deleteTarget.id)
+                      addLog({ userId: user?.name ?? 'unknown', action: 'cert_deleted', entityType: 'CERTIFICATE', after: { cert: deleteTarget.number } })
                       toast.success('Certificate deleted')
                     }
                     setDeleteTarget(null)

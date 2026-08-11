@@ -1,21 +1,11 @@
 import React from 'react'
-import { Document, Image, Page, Text, View } from '@react-pdf/renderer'
-import type { Certificate, TestParameterRow } from '@/types'
-import {
-  combineObserved,
-  combineSpecified,
-  formatSpecified,
-} from '@/lib/result'
+import { Document, Page, Text, View } from '@react-pdf/renderer'
+import type { Certificate, CertificateHeatSelection, HeatSample, MasterSection, ParsedValue } from '@/types'
+import { sampleContexts, reportFor } from '@/lib/certificateStatus'
+import { validateValue } from '@/lib/validation'
+import { matchParameter } from '@/lib/validation'
 import { formatDateDisplay } from '@/lib/id'
-import { getCertificateDisplayParts } from '@/lib/factories'
-import { useClientStore } from '@/stores/clientStore'
-import { useSettingsStore } from '@/stores/settingsStore'
-
-interface CertColumn {
-  header: string
-  specified: string
-  observed: string
-}
+import { useHeatRecordStore } from '@/stores/heatRecordStore'
 
 const CELL_BORDER = {
   borderWidth: 0.7,
@@ -24,58 +14,6 @@ const CELL_BORDER = {
 } as const
 
 const bodyStyle = { fontFamily: 'Helvetica', fontSize: 8 } as const
-
-function shortSymbol(label: string): string {
-  const m = label.match(/\(([^)]+)\)/)
-  return m ? m[1] : label
-}
-
-function buildColumns(
-  rows: TestParameterRow[],
-  config?: Array<{ header: string; labels: string[] }>,
-): CertColumn[] {
-  const cols: CertColumn[] = []
-  const used = new Set<TestParameterRow>()
-  if (config) {
-    for (const cfg of config) {
-      const matching = rows.filter((r) =>
-        cfg.labels.some((l) => r.label.toLowerCase() === l.toLowerCase()),
-      )
-      if (matching.length === 0) continue
-      matching.forEach((m) => used.add(m))
-      cols.push({
-        header: cfg.header,
-        specified: combineSpecified(matching),
-        observed: combineObserved(matching),
-      })
-    }
-  }
-  const leftover = rows.filter((r) => !used.has(r))
-  for (const r of leftover) {
-    cols.push({
-      header: r.label + (r.unit ? ` ${r.unit}` : ''),
-      specified: formatSpecified(r.minimum, r.maximum),
-      observed: r.observed?.trim() || '--',
-    })
-  }
-  return cols
-}
-
-const MECH_COLUMNS = [
-  { header: '0.2% Yield Limit N/mm2', labels: ['0.2% Yield Limit'] },
-  {
-    header: 'Ultimate Tensile Strength N/mm2',
-    labels: ['Ultimate Tensile Strength', 'UTS'],
-  },
-  { header: 'Elongation % / Hardness BHN', labels: ['Elongation', 'Hardness'] },
-]
-
-const MICRO_COLUMNS = [
-  { header: 'Average Nodularity %', labels: ['Average Nodularity'] },
-  { header: 'Nodule Count / mm2', labels: ['Nodule Count'] },
-  { header: 'Pearlite / Ferrite', labels: ['Pearlite', 'Ferrite'] },
-  { header: 'Carbide', labels: ['Carbide'] },
-]
 
 function Cell({
   children,
@@ -113,13 +51,7 @@ function Cell({
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <View
-      style={{
-        ...CELL_BORDER,
-        paddingVertical: 3,
-        backgroundColor: '#e5e5e5',
-      }}
-    >
+    <View style={{ ...CELL_BORDER, paddingVertical: 3, backgroundColor: '#e5e5e5' }}>
       <Text
         style={{
           fontFamily: 'Helvetica',
@@ -134,63 +66,10 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   )
 }
 
-function SpecGrid({
-  title,
-  columns,
-  heatNo,
-}: {
-  title: string
-  columns: CertColumn[]
-  heatNo: string
-}) {
-  const labelWidth = 62
-  const heatWidth = 34
-  return (
-    <View>
-      <SectionTitle>{title}</SectionTitle>
-      <View style={{ flexDirection: 'row' }}>
-        <Cell bold center style={{ width: labelWidth, backgroundColor: '#f2f2f2' }}>
-          {title === 'CHEMICAL ANALYSIS' ? 'Elements' : 'Property'}
-        </Cell>
-        <Cell bold center style={{ width: heatWidth, backgroundColor: '#f2f2f2' }}>
-          Heat No.
-        </Cell>
-        {columns.map((c) => (
-          <Cell bold center key={c.header} style={{ flex: 1, backgroundColor: '#f2f2f2' }}>
-            {c.header}
-          </Cell>
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row' }}>
-        <Cell style={{ width: labelWidth, backgroundColor: '#f7f7f7' }}>Specified</Cell>
-        <Cell center style={{ width: heatWidth }}>
-          --
-        </Cell>
-        {columns.map((c, i) => (
-          <Cell center key={i} style={{ flex: 1 }}>
-            {c.specified}
-          </Cell>
-        ))}
-      </View>
-      <View style={{ flexDirection: 'row' }}>
-        <Cell style={{ width: labelWidth }}>Observed</Cell>
-        <Cell center style={{ width: heatWidth }}>
-          {heatNo}
-        </Cell>
-        {columns.map((c, i) => (
-          <Cell center key={i} style={{ flex: 1 }}>
-            {c.observed}
-          </Cell>
-        ))}
-      </View>
-    </View>
-  )
-}
-
 function InfoRow({
   cells,
 }: {
-  cells: Array<{ label: string; value: string; fill?: boolean }>
+  cells: Array<{ label: string; value: string }>
 }) {
   return (
     <View style={{ flexDirection: 'row' }}>
@@ -199,7 +78,7 @@ function InfoRow({
           <View
             style={{
               ...CELL_BORDER,
-              width: 118,
+              width: 130,
               paddingVertical: 2,
               paddingHorizontal: 4,
               backgroundColor: '#f2f2f2',
@@ -216,36 +95,127 @@ function InfoRow({
   )
 }
 
-export function TestCertificateDocument({
-  certificate,
-}: {
-  certificate: Certificate
-}) {
-  const cert = certificate
-  const settings = useSettingsStore.getState()
-  const signatureImage = cert.signatureImage || settings.signatureImage
-  const stampImage = cert.stampImage || settings.stampImage
-  const displayParts = getCertificateDisplayParts(cert)
-  const heatNo =
-    displayParts[0]?.dailyHeatNumber?.trim() || cert.chemicalRows[0]?.observed || '--'
-  const chemicalColumns = buildColumns(
-    cert.chemicalRows,
-    cert.chemicalRows.map((r) => ({
-      header: `${shortSymbol(r.label)}${r.unit ? ` ${r.unit}` : ''}`,
-      labels: [r.label],
-    })),
-  )
-  const mechanicalColumns = buildColumns(cert.mechanicalRows, MECH_COLUMNS)
-  const microColumns = buildColumns(cert.microStructureRows, MICRO_COLUMNS)
+function specFor(p: { ruleType: string; min?: string; max?: string; expectedValue?: string; sourceText?: string }): string {
+  if (p.sourceText) return p.sourceText
+  switch (p.ruleType) {
+    case 'Range':
+      return `${p.min ?? '?'} - ${p.max ?? '?'}`
+    case 'Minimum':
+      return `${p.min ?? '?'} Min.`
+    case 'Maximum':
+      return `${p.max ?? '?'} Max.`
+    case 'ExactNumber':
+    case 'ExactText':
+      return p.expectedValue ?? '—'
+    default:
+      return 'Info'
+  }
+}
 
-   const remarks = cert.remarks?.trim() || cert.certificationStatement?.trim() || ' '
-  const client = useClientStore.getState().getClient(cert.clientId)
-  const clientName = client?.name ?? cert.clientId
+function valueFor(parsed: ParsedValue[] | undefined, paramName: string): string {
+  if (!parsed) return '--'
+  const found = parsed.find((v) => matchParameter({ name: paramName, aliases: [] }, v.name))
+  return found?.value ?? '--'
+}
+
+function SectionGrid({
+  title,
+  section,
+  report,
+  heatLabel,
+}: {
+  title: string
+  section: MasterSection
+  report?: ReturnType<typeof reportFor>
+  heatLabel: string
+}) {
+  const params = section.parameters
+  const parsed = report?.parsedValues ?? []
+  return (
+    <View>
+      <SectionTitle>{title}</SectionTitle>
+      <View style={{ flexDirection: 'row' }}>
+        <Cell bold center style={{ width: 110, backgroundColor: '#f2f2f2' }}>
+          Parameter
+        </Cell>
+        <Cell bold center style={{ width: 130, backgroundColor: '#f2f2f2' }}>
+          Master Specification
+        </Cell>
+        <Cell bold center style={{ width: 90, backgroundColor: '#f2f2f2' }}>
+          Observed ({heatLabel})
+        </Cell>
+        <Cell bold center style={{ flex: 1, backgroundColor: '#f2f2f2' }}>
+          Result
+        </Cell>
+      </View>
+      {params.length === 0 ? (
+        <View style={{ flexDirection: 'row' }}>
+          <Cell style={{ width: 110 }}>—</Cell>
+          <Cell style={{ width: 130 }}>—</Cell>
+          <Cell center style={{ width: 90 }}>--</Cell>
+          <Cell style={{ flex: 1 }}>—</Cell>
+        </View>
+      ) : (
+        params.map((p) => {
+          const val = valueFor(parsed, p.name)
+          const outcome = val !== '--' && val !== '' ? validateValue(p, val) : undefined
+          const result = outcome ? outcome.result : 'PENDING'
+          const color = result === 'FAIL' ? '#b91c1c' : result === 'WARNING' ? '#a16207' : '#111827'
+          return (
+            <View style={{ flexDirection: 'row' }} key={p.id}>
+              <Cell style={{ width: 110 }}>{p.name}</Cell>
+              <Cell style={{ width: 130 }}>{specFor(p)}</Cell>
+              <Cell center style={{ width: 90 }}>{val}</Cell>
+              <Cell center style={{ flex: 1 }}>
+                <Text style={{ ...bodyStyle, color }}>{result.replace('_', ' ')}</Text>
+              </Cell>
+            </View>
+          )
+        })
+      )}
+    </View>
+  )
+}
+
+function HeatSection({
+  selection,
+  sample,
+  section,
+}: {
+  selection: CertificateHeatSelection
+  sample?: HeatSample
+  section: MasterSection
+}) {
+  const sampleId = sample?.id
+  const report = reportFor(selection, section.key, sampleId)
+  const heatLabel = sample ? sample.label : selection.heatCode
+  const title = `${section.name.toUpperCase()}${sample ? ` - SAMPLE ${sample.label}` : ''}`
+  return (
+    <View>
+      <SectionGrid title={title} section={section} report={report} heatLabel={heatLabel} />
+    </View>
+  )
+}
+
+export function TestCertificateDocument({ certificate }: { certificate: Certificate }) {
+  const cert = certificate
+  const snap = cert.productSnapshot
+  const heatRecords = useHeatRecordStore.getState().heatRecords
+
+  const partsRows = cert.selectedHeats.map((selection) => {
+    const heatRecord = heatRecords.find((h) => h.id === selection.heatRecordId)
+    const contexts = sampleContexts(selection, heatRecords)
+    return {
+      selection,
+      heatRecord,
+      contexts,
+    }
+  })
 
   return (
     <Document
       title={cert.certificateNumber}
-      author={cert.companyName}
+      author="GN ALTECH PRIVATE LIMITED"
       subject="Test Certificate"
       creator="GN ALTECH Test Certificate Generator"
     >
@@ -253,40 +223,24 @@ export function TestCertificateDocument({
         size={{ width: 841.89, height: 595.28 }}
         style={{ padding: 24, fontFamily: 'Helvetica', fontSize: 8 }}
       >
-        {/* Company / title / format */}
         <View style={{ flexDirection: 'row', marginBottom: 6 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontFamily: 'Helvetica', fontSize: 13, fontWeight: 'bold' }}>
-              {cert.companyName || 'GN ALTECH PRIVATE LIMITED'}
+              GN ALTECH PRIVATE LIMITED
             </Text>
+            <Text style={{ ...bodyStyle }}>Metoda, Rajkot, Gujarat, India</Text>
           </View>
           <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text
-              style={{
-                fontFamily: 'Helvetica',
-                fontSize: 15,
-                fontWeight: 'bold',
-                letterSpacing: 1,
-              }}
-            >
-              {cert.title || 'TEST CERTIFICATE'}
+            <Text style={{ fontFamily: 'Helvetica', fontSize: 15, fontWeight: 'bold', letterSpacing: 1 }}>
+              TEST CERTIFICATE
             </Text>
           </View>
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
-            <Text style={{ ...bodyStyle }}>
-              Format No.: {cert.formatNumber || ' '}
-            </Text>
-            <Text style={bodyStyle}>Rev. No. & Date: {cert.revisionText || ' '}</Text>
-            {cert.licenseNumber ? (
-              <Text style={bodyStyle}>Licence No.: {cert.licenseNumber}</Text>
-            ) : null}
-            {cert.standardReference ? (
-              <Text style={bodyStyle}>Std. Ref.: {cert.standardReference}</Text>
-            ) : null}
+            <Text style={bodyStyle}>Format No.: GEN/QC/01</Text>
+            <Text style={bodyStyle}>Rev. No. & Date: 01 / {new Date().getFullYear()}</Text>
           </View>
         </View>
 
-        {/* Certificate information */}
         <InfoRow
           cells={[
             { label: 'Certificate No.', value: cert.certificateNumber || ' ' },
@@ -295,145 +249,99 @@ export function TestCertificateDocument({
         />
         <InfoRow
           cells={[
-            { label: 'Customer', value: clientName || ' ' },
-            { label: 'Grade:', value: cert.grade || ' ' },
+            { label: 'SAP No.', value: snap?.sapNo || ' ' },
+            { label: 'Part No.:', value: snap?.partNo || ' ' },
+          ]}
+        />
+        <InfoRow
+          cells={[
+            { label: 'Description', value: snap?.description || ' ' },
+            { label: 'Grade:', value: snap?.grade || ' ' },
+          ]}
+        />
+        <InfoRow
+          cells={[
+            { label: 'Material', value: snap?.material || ' ' },
+            { label: 'Customer:', value: snap?.customer || ' ' },
           ]}
         />
         <InfoRow
           cells={[
             { label: 'Invoice / Challan Number', value: cert.invoiceNumber || ' ' },
-            { label: 'Invoice Date:', value: formatDateDisplay(cert.invoiceDate) || ' ' },
-          ]}
-        />
-        <InfoRow
-          cells={[
-            { label: 'Delivery Condition', value: cert.deliveryCondition || ' ' },
-            { label: 'Material:', value: cert.material || ' ' },
+            { label: 'Delivery Condition:', value: cert.deliveryCondition || ' ' },
           ]}
         />
 
-        {/* Parts table */}
         <View style={{ marginTop: 6 }}>
           <View style={{ flexDirection: 'row' }}>
             <Cell bold center style={{ width: 34, backgroundColor: '#f2f2f2' }}>Sr. No.</Cell>
-            <Cell bold center style={{ width: 80, backgroundColor: '#f2f2f2' }}>Qty.</Cell>
-            <Cell bold center style={{ width: 80, backgroundColor: '#f2f2f2' }}>Part No.</Cell>
+            <Cell bold center style={{ width: 90, backgroundColor: '#f2f2f2' }}>SAP No.</Cell>
+            <Cell bold center style={{ width: 90, backgroundColor: '#f2f2f2' }}>Part No.</Cell>
             <Cell bold center style={{ flex: 1, backgroundColor: '#f2f2f2' }}>Description</Cell>
-            <Cell bold center style={{ width: 80, backgroundColor: '#f2f2f2' }}>Heat No.</Cell>
-            <Cell bold center style={{ width: 80, backgroundColor: '#f2f2f2' }}>Batch No.</Cell>
+            <Cell bold center style={{ width: 90, backgroundColor: '#f2f2f2' }}>Heat Code</Cell>
+            <Cell bold center style={{ width: 70, backgroundColor: '#f2f2f2' }}>Batch No.</Cell>
           </View>
-          {displayParts.map((p, i) => (
-            <View style={{ flexDirection: 'row' }} key={p.id}>
+          {partsRows.map((row, i) => (
+            <View style={{ flexDirection: 'row' }} key={row.selection.id}>
               <Cell center style={{ width: 34 }}>{i + 1}</Cell>
-              <Cell style={{ width: 80 }}>{p.quantity}</Cell>
-              <Cell style={{ width: 80 }}>{p.partNumber}</Cell>
-              <Cell style={{ flex: 1 }}>{p.description}</Cell>
-              <Cell style={{ width: 80 }}>{p.dailyHeatNumber}</Cell>
-              <Cell style={{ width: 80 }}>{p.batchNumber}</Cell>
+              <Cell style={{ width: 90 }}>{snap?.sapNo || ''}</Cell>
+              <Cell style={{ width: 90 }}>{snap?.partNo || ''}</Cell>
+              <Cell style={{ flex: 1 }}>{snap?.description || ''}</Cell>
+              <Cell style={{ width: 90 }}>{row.selection.heatCode}</Cell>
+              <Cell style={{ width: 70 }}>{row.selection.batchNo || ''}</Cell>
             </View>
           ))}
         </View>
 
-        {/* Test sections */}
-        <View style={{ marginTop: 6 }}>
-          <SpecGrid
-            title="CHEMICAL ANALYSIS"
-            columns={chemicalColumns}
-            heatNo={heatNo}
-          />
-          <SpecGrid
-            title="MECHANICAL PROPERTIES"
-            columns={mechanicalColumns}
-            heatNo={heatNo}
-          />
-          <SpecGrid
-            title="MICRO STRUCTURE"
-            columns={microColumns}
-            heatNo={heatNo}
-          />
-        </View>
-
-        {/* Additional tests + authorization */}
-        <View style={{ marginTop: 6, flexDirection: 'row' }}>
-          <View style={{ flex: 3 }}>
-            <View style={{ flexDirection: 'row' }}>
-              <Cell bold style={{ flex: 1, backgroundColor: '#f2f2f2' }}>
-                Additional Test
-              </Cell>
-              <Cell bold style={{ flex: 1, backgroundColor: '#f2f2f2' }}>
-                Result
-              </Cell>
+        {partsRows.map((row) => {
+          const sections = snap?.sections ?? []
+          return (
+            <View key={`${row.selection.id}-sections`} style={{ marginTop: 6 }}>
+              {row.contexts.map((ctx) => (
+                <View key={`${row.selection.id}-${ctx.sampleId ?? 'only'}`}>
+                  {sections.map((section) => (
+                    <HeatSection
+                      key={section.id}
+                      selection={row.selection}
+                      sample={ctx.sampleId ? row.heatRecord?.heats.find((s) => s.id === ctx.sampleId) : undefined}
+                      section={section}
+                    />
+                  ))}
+                </View>
+              ))}
             </View>
-            {cert.additionalTests.map((t) => (
-              <View style={{ flexDirection: 'row' }} key={t.id}>
-                <Cell style={{ flex: 1 }}>{t.label}</Cell>
-                <Cell style={{ flex: 1 }}>{t.value}</Cell>
-              </View>
-            ))}
-          </View>
-          <View style={{ flex: 1.15 }}>
-            <Cell bold center style={{ backgroundColor: '#f2f2f2' }}>
-              Authorization
-            </Cell>
-            <View
-              style={{
-                ...CELL_BORDER,
-                flex: 1,
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingVertical: 8,
-              }}
-            >
-              <Text style={{ ...bodyStyle, textAlign: 'center' }}>
-                {cert.companyAuthorizationText || 'For GN ALTECH PRIVATE LIMITED'}
-              </Text>
-              <Text style={{ ...bodyStyle, textAlign: 'center', marginTop: 12 }}>
-                Authorized Signatory
-              </Text>
+          )
+        })}
+
+        <View style={{ marginTop: 6, flexDirection: 'row' }}>
+          <View style={{ flex: 1 }}>
+            <Cell bold center style={{ backgroundColor: '#f2f2f2' }}>Authorization</Cell>
+            <View style={{ ...CELL_BORDER, alignItems: 'center', justifyContent: 'center', paddingVertical: 8 }}>
+              <Text style={{ ...bodyStyle, textAlign: 'center' }}>For GN ALTECH PRIVATE LIMITED</Text>
+              <Text style={{ ...bodyStyle, textAlign: 'center', marginTop: 12 }}>Authorized Signatory</Text>
             </View>
           </View>
         </View>
 
-        {/* Remarks */}
         <View style={{ marginTop: 6, flexDirection: 'row' }}>
-          <View
-            style={{
-              ...CELL_BORDER,
-              width: 70,
-              paddingVertical: 2,
-              paddingHorizontal: 4,
-              backgroundColor: '#f2f2f2',
-            }}
-          >
+          <View style={{ ...CELL_BORDER, width: 70, paddingVertical: 2, paddingHorizontal: 4, backgroundColor: '#f2f2f2' }}>
             <Text style={{ ...bodyStyle, fontWeight: 'bold' }}>Remarks</Text>
           </View>
           <View style={{ ...CELL_BORDER, flex: 1, paddingVertical: 2, paddingHorizontal: 4 }}>
-            <Text style={{ ...bodyStyle, lineHeight: 1.4 }}>{remarks}</Text>
+            <Text style={{ ...bodyStyle, lineHeight: 1.4 }}>
+              {cert.remarks || 'This is to certify that the above castings are manufactured as per the customer specification and are found to be conforming to the required quality.'}
+            </Text>
           </View>
         </View>
 
-        {/* Signature block */}
         <View style={{ marginTop: 14, flexDirection: 'row' }}>
           {[
             { label: 'Tested by', value: cert.testedBy },
             { label: 'Reviewed by', value: cert.reviewedBy },
             { label: 'Approved by', value: cert.approvedBy },
-          ].map((s, index) => (
+          ].map((s) => (
             <View key={s.label} style={{ flex: 1, alignItems: 'center' }}>
-              {index === 2 && signatureImage ? (
-                <Image
-                  src={signatureImage}
-                  style={{ width: 60, height: 26, objectFit: 'contain' }}
-                />
-              ) : index === 1 && stampImage ? (
-                <Image
-                  src={stampImage}
-                  style={{ width: 60, height: 26, objectFit: 'contain' }}
-                />
-              ) : null}
-              <Text style={{ ...bodyStyle, marginTop: 14 }}>
-                {s.label}: {s.value || ''}
-              </Text>
+              <Text style={{ ...bodyStyle, marginTop: 14 }}>{s.label}: {s.value || ''}</Text>
               <View style={{ borderBottomWidth: 0.5, borderColor: '#000', width: 110, marginTop: 2 }} />
             </View>
           ))}

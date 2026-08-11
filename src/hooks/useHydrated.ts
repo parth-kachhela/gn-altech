@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useCertificateStore } from '@/stores/certificateStore'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { useClientStore } from '@/stores/clientStore'
-import { useItemStore } from '@/stores/itemStore'
+import { useProductMasterStore } from '@/stores/productMasterStore'
+import { useAuditStore } from '@/stores/auditStore'
+import { useDepartmentRequestStore } from '@/stores/departmentRequestStore'
 
 export function useCertificatesHydrated(): boolean {
   const hydrated = useCertificateStore((s) => s.hasHydrated)
+  return hydrated
+}
+
+export function useProductMastersHydrated(): boolean {
+  const hydrated = useProductMasterStore((s) => s.hasHydrated)
   return hydrated
 }
 
@@ -14,22 +20,23 @@ export function useHeatRecordsHydrated(): boolean {
   return hydrated
 }
 
-export function useClientsHydrated(): boolean {
-  const hydrated = useClientStore((s) => s.hasHydrated)
+export function useAuditHydrated(): boolean {
+  const hydrated = useAuditStore((s) => s.hasHydrated)
   return hydrated
 }
 
-export function useItemsHydrated(): boolean {
-  const hydrated = useItemStore((s) => s.hasHydrated)
+export function useDepartmentRequestsHydrated(): boolean {
+  const hydrated = useDepartmentRequestStore((s) => s.hasHydrated)
   return hydrated
 }
 
 export function useStoresHydrated(): boolean {
   const certHydrated = useCertificatesHydrated()
   const heatHydrated = useHeatRecordsHydrated()
-  const clientHydrated = useClientsHydrated()
-  const itemHydrated = useItemsHydrated()
-  return certHydrated && heatHydrated && clientHydrated && itemHydrated
+  const masterHydrated = useProductMastersHydrated()
+  const auditHydrated = useAuditHydrated()
+  const deptHydrated = useDepartmentRequestsHydrated()
+  return certHydrated && heatHydrated && masterHydrated && auditHydrated && deptHydrated
 }
 
 export function useHydratedAfter(millis = 50): boolean {

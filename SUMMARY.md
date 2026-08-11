@@ -1,58 +1,63 @@
 # Session Summary
 
 ## Objective Completed
-Restructured the app with Client & Item master CRUD, linked heat codes to clients/items, and replaced linear flow with a **Certificate Wizard** (Info → Items & Heat Codes → Footer & Authorization → Upload Reports → Review & Generate).
+Internal rebuild of the GN ALTECH certificate app completed. The app is now driven entirely by the
+user's `GN_Altech_Demo_Master.xlsx` (Product Master → Heat Codes/Heats → Report Cards → Final Review
+→ Issue). Client/Item legacy models were fully removed, and the app ships clean (no auto-seed).
 
 ## Work Completed
 
 ### 1. Types (`src/types/index.ts`)
-- Added `Client`, `Item`, `CertificateItem`, `CertificateHeatRecord` types
-- `HeatRecord` now has `clientId` + `itemId` (no more `customerName`/`partNumber` fields)
-- `Certificate` now has: `clientId`, `items[]`, `heatRecords[]`, `material`/`grade` at root (removed `customerName`/`parts` array)
+- `ProductMaster` / `MasterSection` / `MasterParameter` (SAP No., part, material, customer + grouped sections/params)
+- `HeatRecord` (`sapNo`, `heatCode`, `batchNo`, `quantity`, `heats: HeatSample[]`, `demoReports`)
+- `Certificate` (`productMasterId`, `productSnapshot`, `selectedHeats`, `reviewed`, `issuedAt`,
+  `testedBy`/`reviewedBy`/`approvedBy`, `invoiceNumber`/`deliveryCondition`/`remarks`)
+- `ReportRecord` (`sourceType` UPLOADED|REPEATED|SUGGESTED|MANUAL|DEPARTMENT|DEMO, `confirmed`,
+  `parsedValues`, `warnings`, `departmentRequestId`), `DepartmentRequest`, `AuditLog`, `AppUser`
+- Removed legacy: `Client`, `Item`, `CertificateItem`, `CertificateHeatRecord`, `TestParameterRow`, `UploadedReport`
 
-### 2. Data Layer
-- **`src/data/heatRecords.ts`**: 20 heat records with `clientId`+`itemId`, `buildDemoHeatRecords()` function
-- **`src/data/certificates.ts`**: `buildDemoCertificates()`, `buildA6ACertificateRecord()`, `A6A_RAW_VALUES`
-- **`src/data/demo.ts`**: DEMO_CLIENTS (8) + DEMO_PARTS (12) for seeding Client/Item stores
+### 2. Lib
+- New: `certificateNo.ts` (`TC-YYYY-NNNNNN`), `certificateStatus.ts` (deriveCertificateStatus,
+  reportCardStatus, completionSummary, reportFor), `validation.ts` (`validateValue`,
+  `matchParameter`), `specParser.ts`, `numeric.ts`, `nearAround.ts`, `masterFactory.ts`,
+  `fileStorage.ts` (idb-keyval `gn-report:`), `migration.ts`, `permissions.ts`
+- Roles remapped: `SUPER_ADMIN` / `QA_ADMIN` / `DEPARTMENT_UPLOADER`; `departmentForSectionKey()`
+- Deleted legacy: `factories.ts`, `certDefaults.ts`, `result.ts`, `useSeedDemo.ts`
 
-### 3. Stores
-- **`src/stores/clientStore.ts`**: CRUD + search + seeding (persisted to localStorage)
-- **`src/stores/itemStore.ts`**: CRUD + search + seeding
-- **`src/stores/heatRecordStore.ts`**: Updated for new `HeatRecord` shape, added `searchHeatRecords` with client/item filters
-- **`src/stores/certificateStore.ts`**: `getCertificate(id)` lookup by id-or-number, `loadA6ADemo()` restored
-- **`src/hooks/useHydrated.ts`**: Added `useClientStore`, `useItemStore`, `useStoresHydrated`; `useSeedDemo` seeds all stores
+### 3. Stores (`src/stores/`)
+- Rewritten: `productMasterStore` (gn-alt-product-masters), `heatRecordStore` (v3),
+  `certificateStore` (v3), `authStore` (v2 w/ role migration), `departmentRequestStore`, `auditStore`, `usersStore`
+- Deleted legacy: `clientStore.ts`, `itemStore.ts`
 
-### 4. Factories (`src/lib/factories.ts`)
-- `createCertificate`, `createCertificateItem`, `createCertificateHeatRecord`
-- `suggestCertificateNumber`, `certificateFileName` (now uses client name)
-- `getCertificateDisplayParts` (joins items + heat records)
+### 4. Services
+- New: `masterImport.ts` (`parseMasterWorkbook`), `masterExport.ts`, `parsers/` (`chemical.ts`,
+  `hardness.ts`, `tensile.ts`, `micro.ts` OCR via tesseract.js, `generic.ts`, `common.ts`, `index.ts`),
+  rewritten `excelExport.ts` (Certificate Summary / Heat Summary / per-section / Audit sheets),
+  rewritten `certificatePdf.tsx` + `TestCertificateDocument.tsx`
+- Deleted legacy: `reportParser.ts`, `reportMerge.ts`, `pdfExtract.ts` kept
 
-### 5. UI Pages
-- **`src/pages/ClientsPage.tsx`** + **`ClientFormPage.tsx`**: Full CRUD with RHF + zod
-- **`src/pages/ItemsPage.tsx`** + **`ItemFormPage.tsx`**: Full CRUD
-- **`src/pages/CertificateWizardPage.tsx`**: 5-step wizard (Info, Items & Heat Codes, Footer, Upload, Review & Generate)
-- **`src/pages/CertificatesPage.tsx`**: List with search, delete confirmation, status badges
-- **`src/pages/CertificateDetailPage.tsx`**: Detail view with client/item lookups, reports display
-- **`src/components/layout/Sidebar.tsx`**: Added Clients + Items nav items, `loadA6ADemo` wired via `certificateStore`
+### 5. Pages
+- New/rewritten: `MasterImportPage`, `ProductMastersPage`, `ProductMasterDetailPage`,
+  `HeatRecordsPage`, `HeatRecordNewPage`/`EditPage`/`DetailPage`, `CertificateWizardPage`
+  (sap→heats→reports→review→issue), `CertificatesPage`, `CertificateDetailPage`,
+  `DepartmentRequestsPage`, `DepartmentInboxPage`, `DashboardPage`, `SettingsPage` (Reset + Clear, no re-seed)
+- Deleted legacy: `ClientsPage`, `ClientFormPage`, `ItemsPage`, `ItemFormPage`, old wizard pages
 
-### 6. Services
-- **`src/services/reportMerge.ts`**: Rewritten for new types — `mergeReportIntoCertificate` + `resetCertificateToParsed` with client/item/heat lookups
-- **`src/services/excelExport.ts`**: Updated `headerRows` + `partsRows` to use `getCertificateDisplayParts` + client name
-- **`src/services/reportParser.ts`**: Unchanged (verified working)
-- **`src/services/certificatePdf.ts`**: Uses client lookup via store
+### 6. Components
+- New: `components/certificate-flow/` (`ReportCard`, `ReportWorkspaceStep`, `ParsedReviewDialog`,
+  `RepeatPreviousDialog`, `NearAroundDialog`, `ReportStatusBadge`, `FinalReviewStep`, `IssueStep`)
+- New: `components/master/` (`ParameterRowEditor`, `SectionEditor`, `MasterEditorDialog`)
+- Deleted legacy: `components/certificate-wizard/`, `components/StatusBadge.tsx`
 
-### 7. Components
-- Deleted old: `CertificateForm`, `CertificateTable`, `CertificateDetailView`, `PartsEditor`, `ParamEditor`, `AdditionalTestsEditor`, `FooterEditor`, `ReportUploadCard`
-- **HeatRecordForm**: Updated client/item `<select>` dropdowns
-- **HeatRecordTable**: Joins client/item names via store lookup
-- **HeatRecordDetailPage**: Client/item lookups
-- **TestCertificateDocument**: Uses `getCertificateDisplayParts` + client lookup
+### 7. Demo Reports
+- 64 files copied to `public/demo-reports/<SAP>/<HeatCode>/...`; loadable via "Load Demo" after
+  workbook import maps them via Report Index sheet.
 
-### 8. Build & Lint
-- `npm run build`: TypeScript compilation passes (0 errors)
-- `npm run lint`: oxlint passes (only pre-existing shadcn/ui warnings)
-- Node validation: `parseReport`, `createCertificate`, `exportCertificateToExcel` all verified
+## Verification
+- `npx tsc -b --noEmit`: 0 errors
+- `npm run lint`: oxlint passes (pre-existing shadcn/ui warnings only)
+- `npm run build`: succeeds (pre-existing chunk-size warning only)
 
-### 9. README (`README.md`)
-- 14-step acceptance demo updated for new workflow
-- Project structure section updated
+## Remaining / Known Gaps
+- App has no demo data on first run; user must import `GN_Altech_Demo_Master.xlsx` via Product Masters → Import.
+- `README.md` still describes the old client/item workflow and should be updated to the SAP master flow.

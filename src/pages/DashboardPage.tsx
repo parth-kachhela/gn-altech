@@ -2,11 +2,13 @@ import { useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRight,
+  Check,
   FilePlus2,
   FileText,
   Factory,
   FlaskConical,
-  Sparkles,
+  ShieldCheck,
+  Boxes,
   UploadCloud,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -25,13 +27,24 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
-import { CertificateStatusBadge } from '@/components/StatusBadge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useCertificateStore } from '@/stores/certificateStore'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { useClientStore } from '@/stores/clientStore'
-import { useItemStore } from '@/stores/itemStore'
+import { useProductMasterStore } from '@/stores/productMasterStore'
+import { useDepartmentRequestStore } from '@/stores/departmentRequestStore'
+import { useAuthStore } from '@/stores/authStore'
+import { getCapabilities, ROLES, ROLE_LABELS } from '@/lib/permissions'
 import { useStoresHydrated } from '@/hooks/useHydrated'
 import { LoadingPage } from '@/components/EmptyState'
+import { deriveCertificateStatus } from '@/lib/certificateStatus'
+import { CertificateStatusBadge } from '@/components/certificate-flow/ReportStatusBadge'
 import { toast } from 'sonner'
 
 export function DashboardPage() {
@@ -39,57 +52,67 @@ export function DashboardPage() {
   const hydrated = useStoresHydrated()
   const certificates = useCertificateStore((s) => s.certificates)
   const heatRecords = useHeatRecordStore((s) => s.heatRecords)
-  const loadA6ADemo = useCertificateStore((s) => s.loadA6ADemo)
+  const masters = useProductMasterStore((s) => s.masters)
+  const departmentRequests = useDepartmentRequestStore((s) => s.requests)
+  const user = useAuthStore((s) => s.user)
+  const switchRole = useAuthStore((s) => s.switchRole)
+  const caps = getCapabilities(user?.role)
 
   const stats = useMemo(() => {
+    const activeMasters = masters.filter((m) => m.status === 'ACTIVE').length
     const activeHeat = heatRecords.filter((h) => h.status === 'ACTIVE').length
-    const usedHeat = heatRecords.filter((h) => h.status === 'USED').length
-    const readyCerts = certificates.filter((c) => c.status === 'READY').length
-    const issuedCerts = certificates.filter((c) => c.status === 'ISSUED').length
-    const draftCerts = certificates.filter((c) => c.status === 'DRAFT').length
+    const statuses = certificates.map((c) => deriveCertificateStatus(c, heatRecords))
+    const issued = statuses.filter((s) => s === 'ISSUED').length
+    const reviewed = statuses.filter((s) => s === 'REVIEWED').length
+    const draft = statuses.filter((s) => s === 'DRAFT').length
+    const pending = statuses.filter((s) => s === 'REPORTS_PENDING' || s === 'WAITING_FOR_DEPARTMENT').length
     const reports = certificates.reduce(
-      (acc, c) => acc + c.reports.filter((r) => r.status === 'READY').length,
+      (acc, c) => acc + c.selectedHeats.reduce((a, s) => a + s.reportRecords.length, 0),
       0,
     )
+    const openRequests = departmentRequests.filter((r) => r.status === 'PENDING' || r.status === 'IN_PROGRESS').length
     return {
+      masterTotal: masters.length,
+      activeMasters,
       heatTotal: heatRecords.length,
       activeHeat,
-      usedHeat,
       certTotal: certificates.length,
-      readyCerts,
-      issuedCerts,
-      draftCerts,
+      issued,
+      reviewed,
+      draft,
+      pending,
       reports,
+      openRequests,
     }
-  }, [heatRecords, certificates])
+  }, [masters, heatRecords, certificates, departmentRequests])
 
   if (!hydrated) return <LoadingPage label="Loading dashboard…" />
-
-  const handleA6A = () => {
-    const id = loadA6ADemo()
-    toast.success('A6A demo certificate opened')
-    navigate(`/certificates/${id}`)
-  }
 
   const recent = [...certificates].slice(0, 6)
 
   const kpis = [
     {
+      label: 'Product Masters',
+      value: stats.masterTotal,
+      sub: `${stats.activeMasters} active`,
+      icon: Boxes,
+    },
+    {
       label: 'Heat Records',
       value: stats.heatTotal,
-      sub: `${stats.activeHeat} active · ${stats.usedHeat} used`,
+      sub: `${stats.activeHeat} active`,
       icon: Factory,
     },
     {
       label: 'Certificates',
       value: stats.certTotal,
-      sub: `${stats.draftCerts} draft · ${stats.readyCerts} ready · ${stats.issuedCerts} issued`,
+      sub: `${stats.draft} draft · ${stats.reviewed} reviewed · ${stats.issued} issued`,
       icon: FileText,
     },
     {
-      label: 'Reports Uploaded',
+      label: 'Reports',
       value: stats.reports,
-      sub: 'chemical / mechanical / micro',
+      sub: `${stats.openRequests} dept. requests open`,
       icon: UploadCloud,
     },
   ]
@@ -98,30 +121,59 @@ export function DashboardPage() {
     <div>
       <PageHeader
         title="Dashboard"
-        description="Overview of heat records, certificates and test reports."
+        description="Overview of product masters, heat records, certificates and test reports."
         actions={
           <>
-            <Button variant="outline" onClick={handleA6A}>
-              <Sparkles className="h-4 w-4 text-amber-500" />
-              Load A6A Demo
-            </Button>
-            <Button asChild>
-              <Link to="/heat-records/new">
-                <Factory className="h-4 w-4" />
-                New Heat Record
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link to="/certificates/new">
-                <FilePlus2 className="h-4 w-4" />
-                New Certificate
-              </Link>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  <ShieldCheck className="h-4 w-4" />
+                  {user ? ROLE_LABELS[user.role] : 'Role'}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Switch role</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {ROLES.map((r) => (
+                  <DropdownMenuItem
+                    key={r}
+                    onClick={() => {
+                      switchRole(r)
+                      toast.success(`Switched to ${ROLE_LABELS[r]}`)
+                    }}
+                    className="gap-2"
+                  >
+                    {user?.role === r ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <span className="h-4 w-4" />
+                    )}
+                    {ROLE_LABELS[r]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {caps.manageProductMaster ? (
+              <Button asChild variant="outline">
+                <Link to="/product-masters/import">
+                  <UploadCloud className="h-4 w-4" />
+                  Import Master
+                </Link>
+              </Button>
+            ) : null}
+            {caps.createCertificate ? (
+              <Button asChild>
+                <Link to="/certificates/new">
+                  <FilePlus2 className="h-4 w-4" />
+                  New Certificate
+                </Link>
+              </Button>
+            ) : null}
           </>
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => (
           <Card key={kpi.label}>
             <CardContent className="flex items-center gap-4 p-4">
@@ -152,37 +204,40 @@ export function DashboardPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Certificate No.</TableHead>
+                <TableHead>SAP No.</TableHead>
+                <TableHead>Part / Description</TableHead>
                 <TableHead>Customer</TableHead>
-                <TableHead>Part</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {recent.map((c) => {
-                const client = useClientStore.getState().getClient(c.clientId)
-                const firstItem = c.items?.[0]
-                const itemData = firstItem ? useItemStore.getState().getItem(firstItem.itemId) : undefined
+                const status = deriveCertificateStatus(c, heatRecords)
+                const snap = c.productSnapshot
                 return (
-                <TableRow
-                  key={c.id}
-                  className="cursor-pointer"
-                  onClick={() => navigate(`/certificates/${c.id}`)}
-                >
-                  <TableCell className="font-medium">{c.certificateNumber || '—'}</TableCell>
-                  <TableCell>{client?.name ?? c.clientId}</TableCell>
-                  <TableCell>{itemData?.name ?? firstItem?.itemId ?? '—'}</TableCell>
-                  <TableCell>{c.certificateDate}</TableCell>
-                  <TableCell>
-                    <CertificateStatusBadge value={c.status} />
-                  </TableCell>
-                </TableRow>
+                  <TableRow
+                    key={c.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/certificates/${c.id}`)}
+                  >
+                    <TableCell className="font-medium">{c.certificateNumber || '—'}</TableCell>
+                    <TableCell className="font-mono text-xs">{snap?.sapNo || '—'}</TableCell>
+                    <TableCell className="max-w-[220px] truncate">
+                      {snap?.partNo} · {snap?.description}
+                    </TableCell>
+                    <TableCell>{snap?.customer || '—'}</TableCell>
+                    <TableCell>{c.certificateDate}</TableCell>
+                    <TableCell>
+                      <CertificateStatusBadge value={status} />
+                    </TableCell>
+                  </TableRow>
                 )
               })}
               {recent.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    No certificates yet. Create one to get started.
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                    No certificates yet. Import the master workbook and create one to get started.
                   </TableCell>
                 </TableRow>
               ) : null}
@@ -194,20 +249,20 @@ export function DashboardPage() {
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Demo workflow</CardTitle>
+            <CardTitle className="text-base">Workflow</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-muted-foreground">
             <p className="flex gap-2">
-              <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              1. Open the A6A demo certificate (Load A6A Demo).
+              <UploadCloud className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              1. Import the master workbook (Product Master, Heat Codes, Report Index).
             </p>
             <p className="flex gap-2">
-              <UploadCloud className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              2. Upload the three A6A PDF reports or use the bundled demo reports.
+              <Boxes className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              2. Create a certificate from a SAP product master and select heat codes.
             </p>
             <p className="flex gap-2">
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              3. Review extracted data, then preview and download PDF / Excel.
+              3. Upload test reports, review extracted values, then issue PDF / Excel.
             </p>
           </CardContent>
         </Card>
@@ -220,11 +275,12 @@ export function DashboardPage() {
               <span className="font-medium text-foreground">DRAFT</span> — created, awaiting work.
             </p>
             <p>
-              <span className="font-medium text-foreground">REPORTS PENDING</span> — one or more
-              test reports are missing.
+              <span className="font-medium text-foreground">PENDING</span> — one or more test
+              reports are missing.
             </p>
             <p>
-              <span className="font-medium text-foreground">READY</span> — all three reports parsed.
+              <span className="font-medium text-foreground">REVIEWED</span> — all reports complete
+              and reviewed.
             </p>
             <p>
               <span className="font-medium text-foreground">ISSUED</span> — certificate issued to
@@ -233,6 +289,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+        <FlaskConical className="h-3.5 w-3.5" />
+        Data is stored in your browser — no server required.
+      </p>
     </div>
   )
 }

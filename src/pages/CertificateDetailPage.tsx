@@ -1,13 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import {
-  FileText,
-  FileSpreadsheet,
-  FileDown,
-  Pencil,
-  Trash2,
-  Save,
-} from 'lucide-react'
+import { FileText, FileSpreadsheet, Pencil, Trash2, CheckCircle2, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,18 +8,22 @@ import { PageHeader } from '@/components/PageHeader'
 import { NotFoundState } from '@/components/EmptyState'
 import { useCertificateStore } from '@/stores/certificateStore'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { useClientStore } from '@/stores/clientStore'
-import { useItemStore } from '@/stores/itemStore'
+import { useAuditStore } from '@/stores/auditStore'
+import { useAuthStore } from '@/stores/authStore'
+import { getCapabilities } from '@/lib/permissions'
 import { useCertificatesHydrated } from '@/hooks/useHydrated'
 import { downloadCertificatePdf } from '@/services/certificatePdf'
 import { exportCertificateToExcel } from '@/services/excelExport'
 import { toast } from 'sonner'
 import { formatDateDisplay } from '@/lib/id'
-import { CertificateStatusBadge } from '@/components/StatusBadge'
 import {
-  AdditionalTestsEditor,
-  TestParameterTable,
-} from '@/components/certificate-wizard/TestTables'
+  deriveCertificateStatus,
+  isReportComplete,
+  reportCardStatus,
+  reportFor,
+  sampleContexts,
+} from '@/lib/certificateStatus'
+import { CertificateStatusBadge, ReportStatusBadge } from '@/components/certificate-flow/ReportStatusBadge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,7 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { Certificate } from '@/types'
+import type { ReportRecord } from '@/types'
 
 export function CertificateDetailPage() {
   const { id = '' } = useParams()
@@ -47,17 +44,11 @@ export function CertificateDetailPage() {
     hydrated ? s.getCertificate(id) : undefined,
   )
   const deleteCertificate = useCertificateStore((s) => s.deleteCertificate)
-  const upsertCertificate = useCertificateStore((s) => s.upsertCertificate)
-  const clients = useClientStore((s) => s.clients)
-  const items = useItemStore((s) => s.items)
   const heatRecords = useHeatRecordStore((s) => s.heatRecords)
-
-  const [draft, setDraft] = useState<Certificate | null>(certificate ?? null)
+  const addLog = useAuditStore((s) => s.addLog)
+  const user = useAuthStore((s) => s.user)
+  const caps = getCapabilities(user?.role)
   const [confirmDelete, setConfirmDelete] = useState(false)
-
-  useEffect(() => {
-    setDraft(certificate ?? null)
-  }, [certificate?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!hydrated) {
     return <div className="p-8">Loading…</div>
@@ -73,17 +64,13 @@ export function CertificateDetailPage() {
     )
   }
 
-  const client = clients.find((c) => c.id === certificate.clientId)
-  const readyReports = certificate.reports.filter((r) => r.status === 'READY').length
-
-  const handleSave = () => {
-    if (!draft) return
-    upsertCertificate(draft)
-    toast.success('Certificate updated')
-  }
+  const status = deriveCertificateStatus(certificate, heatRecords)
+  const snap = certificate.productSnapshot
+  const allReports: ReportRecord[] = certificate.selectedHeats.flatMap((s) => s.reportRecords)
 
   const handleDelete = () => {
     deleteCertificate(certificate.id)
+    addLog({ userId: user?.name ?? 'unknown', action: 'cert_deleted', entityType: 'CERTIFICATE', after: { cert: certificate.certificateNumber } })
     toast.success('Certificate deleted')
     navigate('/certificates')
   }
@@ -92,19 +79,22 @@ export function CertificateDetailPage() {
     <div>
       <PageHeader
         title={certificate.certificateNumber}
-        description={`Certificate for ${client?.name ?? certificate.clientId}`}
+        description={snap ? `${snap.sapNo} — ${snap.partNo} · ${snap.description}` : 'Certificate'}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button asChild>
-              <Link to={`/certificates/${certificate.id}/edit`}>
-                <Pencil className="h-4 w-4 mr-2" />
-                Edit
-              </Link>
-            </Button>
+            {caps.createCertificate ? (
+              <Button asChild>
+                <Link to={`/certificates/${certificate.id}/edit`}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Continue Editing
+                </Link>
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               onClick={async () => {
                 await downloadCertificatePdf(certificate)
+                toast.success('PDF downloaded')
               }}
             >
               <FileText className="h-4 w-4 mr-2" />
@@ -120,34 +110,57 @@ export function CertificateDetailPage() {
               <FileSpreadsheet className="h-4 w-4 mr-2" />
               Excel
             </Button>
-            <Button
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setConfirmDelete(true)}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </Button>
+            {caps.deleteCertificate ? (
+              <Button
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setConfirmDelete(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </Button>
+            ) : null}
           </div>
         }
       />
 
       <Card className="mb-4">
         <CardHeader>
-          <CardTitle>Certificate Overview</CardTitle>
+          <CardTitle>Overview</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-3">
+        <CardContent className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div>
             <span className="text-sm text-muted-foreground">Status</span>
-            <div className="mt-1"><CertificateStatusBadge value={certificate.status} /></div>
+            <div className="mt-1"><CertificateStatusBadge value={status} /></div>
           </div>
           <div>
-            <span className="text-sm text-muted-foreground">Reports Ready</span>
-            <div className="mt-1 text-2xl font-bold">{readyReports}/3</div>
+            <span className="text-sm text-muted-foreground">Reports</span>
+            <div className="mt-1 text-2xl font-bold">
+              {allReports.filter((r) => r.status === 'COMPLETE').length}/{allReports.length}
+            </div>
           </div>
           <div>
-            <span className="text-sm text-muted-foreground">Overall Result</span>
-            <div className="mt-1"><CertificateStatusBadge value={certificate.status} /></div>
+            <span className="text-sm text-muted-foreground">Heat Codes</span>
+            <div className="mt-1 text-2xl font-bold">{certificate.selectedHeats.length}</div>
+            <div className="text-xs text-muted-foreground">
+              {certificate.selectedHeats.reduce((n, s) => n + (s.selectedSamples?.length ?? 0), 0)} samples
+            </div>
+          </div>
+          <div>
+            <span className="text-sm text-muted-foreground">Reviewed</span>
+            <div className="mt-1 flex items-center gap-1">
+              {certificate.reviewed ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <span className="text-sm font-medium">Yes</span>
+                </>
+              ) : (
+                <>
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">No</span>
+                </>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -155,107 +168,138 @@ export function CertificateDetailPage() {
       <Card className="mb-4">
         <CardHeader><CardTitle>Key Information</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-x-8 gap-y-3 md:grid-cols-3">
-          <div><span className="text-sm text-muted-foreground">Certificate No.</span><div>{certificate.certificateNumber}</div></div>
+          <div><span className="text-sm text-muted-foreground">SAP No.</span><div className="font-mono text-sm">{snap?.sapNo || '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Part No.</span><div>{snap?.partNo || '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Description</span><div>{snap?.description || '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Material</span><div>{snap?.material || '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Customer</span><div>{snap?.customer || '—'}</div></div>
           <div><span className="text-sm text-muted-foreground">Date</span><div>{formatDateDisplay(certificate.certificateDate)}</div></div>
-          <div><span className="text-sm text-muted-foreground">Client</span><div>{client?.name ?? certificate.clientId}</div></div>
-          <div><span className="text-sm text-muted-foreground">Material</span><div>{certificate.material ?? '—'}</div></div>
-          <div><span className="text-sm text-muted-foreground">Grade</span><div>{certificate.grade ?? '—'}</div></div>
-          <div><span className="text-sm text-muted-foreground">Format</span><div>{certificate.formatNumber ?? '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Invoice No.</span><div>{certificate.invoiceNumber || '—'}</div></div>
+          <div><span className="text-sm text-muted-foreground">Delivery Condition</span><div>{certificate.deliveryCondition || '—'}</div></div>
+          {certificate.issuedAt ? (
+            <div><span className="text-sm text-muted-foreground">Issued At</span><div>{formatDateDisplay(certificate.issuedAt)}</div></div>
+          ) : null}
         </CardContent>
       </Card>
 
-      <Card className="mb-4">
-        <CardHeader><CardTitle>Items & Heat Records</CardTitle></CardHeader>
-        <CardContent>
-          {certificate.items.map((item) => {
-            const itemData = items.find((i) => i.id === item.itemId)
-            return (
-              <div key={item.id} className="mb-3 last:mb-0">
-                <div className="font-medium">
-                  {itemData?.name ?? item.itemId} — {itemData?.partNumber ?? '—'}
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Material: {itemData?.material ?? '—'} | Grade: {itemData?.grade ?? '—'} | Qty: {item.quantity}
-                </div>
-                {item.heatRecordIds.map((hrId) => {
-                  const hrLink = certificate.heatRecords.find((hr) => hr.id === hrId)
-                  if (!hrLink) return null
-                  const hr = heatRecords.find((h) => h.id === hrLink.heatRecordId)
-                  return (
-                    <div key={hrId} className="mt-1 text-sm">
-                      • Heat: {hr?.dailyHeatNumber ?? hrLink.heatRecordId} | Qty: {hrLink.quantity}
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </CardContent>
-      </Card>
+      {certificate.remarks ? (
+        <Card className="mb-4">
+          <CardHeader><CardTitle>Remarks</CardTitle></CardHeader>
+          <CardContent><p className="text-sm">{certificate.remarks}</p></CardContent>
+        </Card>
+      ) : null}
 
       <Card className="mb-4">
         <CardHeader>
-          <CardTitle>Test Results</CardTitle>
+          <CardTitle>Heat Codes & Test Data</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Organized by heat code and sample.
+          </p>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <TestParameterTable
-            title="Chemical Analysis"
-            rows={draft?.chemicalRows ?? []}
-            onChange={(rows) =>
-              setDraft((d) => (d ? { ...d, chemicalRows: rows } : d))
-            }
-          />
-          <TestParameterTable
-            title="Mechanical Properties"
-            rows={draft?.mechanicalRows ?? []}
-            onChange={(rows) =>
-              setDraft((d) => (d ? { ...d, mechanicalRows: rows } : d))
-            }
-          />
-          <TestParameterTable
-            title="Micro Structure"
-            rows={draft?.microStructureRows ?? []}
-            onChange={(rows) =>
-              setDraft((d) => (d ? { ...d, microStructureRows: rows } : d))
-            }
-          />
-          <AdditionalTestsEditor
-            rows={draft?.additionalTests ?? []}
-            onChange={(rows) =>
-              setDraft((d) => (d ? { ...d, additionalTests: rows } : d))
-            }
-          />
-          <div className="flex justify-end">
-            <Button onClick={handleSave}>
-              <Save className="h-4 w-4 mr-2" />
-              Save Changes
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="mb-4">
-        <CardHeader><CardTitle>Reports</CardTitle></CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            {certificate.reports.map((report) => (
-              <div key={report.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                <div>
-                  <span className="font-medium">{report.fileName}</span>
-                  <span className="ml-2 text-sm text-muted-foreground">{Math.round(report.fileSize / 1024)} KB</span>
-                </div>
-                <Badge variant={report.status === 'READY' ? 'default' : 'secondary'}>{report.status}</Badge>
-              </div>
-            ))}
-          </div>
+          {certificate.selectedHeats.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No heat codes selected yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {certificate.selectedHeats.map((sel) => {
+                const rec = heatRecords.find((h) => h.id === sel.heatRecordId)
+                const contexts = sampleContexts(sel, heatRecords)
+                const requiredSections = (snap?.sections ?? []).filter(
+                  (s) => s.required && s.parameters.length > 0,
+                )
+                const overallComplete = requiredSections.every((section) =>
+                  contexts.every((ctx) =>
+                    isReportComplete(reportFor(sel, section.key, ctx.sampleId), section),
+                  ),
+                )
+                return (
+                  <div key={sel.id} className="rounded-md border bg-background">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold">{sel.heatCode}</span>
+                        {sel.batchNo ? <Badge variant="outline">Batch {sel.batchNo}</Badge> : null}
+                        <Badge variant={sel.heatCodeOnly ? 'secondary' : 'default'}>
+                          {sel.heatCodeOnly ? 'Heat Code Only' : `${contexts.length} sample(s)`}
+                        </Badge>
+                      </div>
+                      {overallComplete ? (
+                        <Badge className="bg-green-600 text-white">
+                          <CheckCircle2 className="mr-1 h-3 w-3" />
+                          Complete
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Pending</Badge>
+                      )}
+                    </div>
+
+                    <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+                      {contexts.map((ctx) => {
+                        const sample = rec?.heats.find((s) => s.id === ctx.sampleId)
+                        return (
+                          <div
+                            key={ctx.sampleId ?? 'heat-only'}
+                            className="flex flex-col rounded-md border"
+                          >
+                            <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
+                              <span className="font-mono text-xs font-medium">
+                                {sel.heatCodeOnly ? 'Heat Code Only' : `Sample ${ctx.label}`}
+                                {sample?.quantity ? (
+                                  <span className="ml-1 font-normal text-muted-foreground">· {sample.quantity}</span>
+                                ) : null}
+                              </span>
+                            </div>
+                            <div className="flex-1 space-y-2.5 p-2.5">
+                              {requiredSections.length === 0 ? (
+                                <p className="text-xs text-muted-foreground">No required sections.</p>
+                              ) : (
+                                requiredSections.map((section) => {
+                                  const report = reportFor(sel, section.key, ctx.sampleId)
+                                  const status = reportCardStatus(report, section)
+                                  return (
+                                    <div key={section.id}>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                          {section.name}
+                                        </p>
+                                        <ReportStatusBadge value={status} />
+                                      </div>
+                                      {report && report.parsedValues.length > 0 ? (
+                                        <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                          {report.parsedValues.map((pv) => (
+                                            <div
+                                              key={`${report.id}-${pv.name}`}
+                                              className="flex items-baseline justify-between gap-2 text-xs"
+                                            >
+                                              <dt className="truncate text-muted-foreground">{pv.name}</dt>
+                                              <dd className="font-mono font-medium">
+                                                {pv.value}
+                                                {pv.unit ? ` ${pv.unit}` : ''}
+                                              </dd>
+                                            </div>
+                                          ))}
+                                        </dl>
+                                      ) : (
+                                        <p className="mt-1 text-xs text-muted-foreground">no data</p>
+                                      )}
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <Button variant="outline" asChild>
-        <Link to="/certificates">
-          <FileDown className="h-4 w-4 mr-2" />
-          All Certificates
-        </Link>
+        <Link to="/certificates">All Certificates</Link>
       </Button>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>

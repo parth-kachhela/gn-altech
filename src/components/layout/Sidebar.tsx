@@ -1,37 +1,31 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import {
   FileText,
   Factory,
   FlaskConical,
   LayoutDashboard,
   Settings,
-  Sparkles,
-  Users,
-  Package,
+  Boxes,
+  FileClock,
+  ClipboardList,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
-import { useCertificateStore } from '@/stores/certificateStore'
-import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/authStore'
+import { getCapabilities, type Capability } from '@/lib/permissions'
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/clients', label: 'Clients', icon: Users },
-  { to: '/items', label: 'Items', icon: Package },
-  { to: '/heat-records', label: 'Heat Records', icon: Factory },
-  { to: '/certificates', label: 'Certificates', icon: FileText },
-  { to: '/settings', label: 'Settings', icon: Settings },
+const NAV_ITEMS: Array<{ to: string; label: string; icon: typeof LayoutDashboard; cap: Capability }> = [
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, cap: 'viewDashboard' },
+  { to: '/product-masters', label: 'Product Masters', icon: Boxes, cap: 'manageProductMaster' },
+  { to: '/heat-records', label: 'Heat Records', icon: Factory, cap: 'manageHeatRecords' },
+  { to: '/certificates', label: 'Certificates', icon: FileText, cap: 'viewCertificates' },
+  { to: '/departments', label: 'Departments', icon: ClipboardList, cap: 'viewDepartmentRequests' },
+  { to: '/departments/inbox', label: 'Dept. Inbox', icon: FileClock, cap: 'uploadReports' },
+  { to: '/settings', label: 'Settings', icon: Settings, cap: 'accessSettings' },
 ]
 
 export function Sidebar() {
-  const navigate = useNavigate()
-  const loadA6ADemo = useCertificateStore((s) => s.loadA6ADemo)
-
-  const handleA6A = () => {
-    const id = loadA6ADemo()
-    toast.success('A6A demo certificate loaded')
-    navigate(`/certificates/${id}`)
-  }
+  const user = useAuthStore((s) => s.user)
+  const caps = getCapabilities(user?.role)
 
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground lg:flex">
@@ -46,7 +40,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.filter((item) => caps[item.cap]).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -66,12 +60,8 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t p-3">
-        <Button variant="outline" className="w-full justify-start gap-2 text-xs" onClick={handleA6A}>
-          <Sparkles className="h-4 w-4 text-amber-500" />
-          Load A6A Demo
-        </Button>
-        <p className="mt-2 px-1 text-[10px] text-muted-foreground">
-          Demo mode · data stored in your browser
+        <p className="px-1 text-[10px] text-muted-foreground">
+          Data stored in your browser · no server
         </p>
       </div>
     </aside>
