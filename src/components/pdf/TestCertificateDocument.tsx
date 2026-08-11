@@ -1,6 +1,6 @@
 import React from 'react'
 import { Document, Page, Text, View } from '@react-pdf/renderer'
-import type { Certificate, CertificateHeatSelection, HeatSample, MasterSection, ParsedValue } from '@/types'
+import type { Certificate, MasterSection, ParsedValue } from '@/types'
 import { sampleContexts, reportFor } from '@/lib/certificateStatus'
 import { validateValue } from '@/lib/validation'
 import { matchParameter } from '@/lib/validation'
@@ -121,16 +121,15 @@ function valueFor(parsed: ParsedValue[] | undefined, paramName: string): string 
 function SectionGrid({
   title,
   section,
-  report,
+  reports,
   heatLabel,
 }: {
   title: string
   section: MasterSection
-  report?: ReturnType<typeof reportFor>
+  reports: Array<ReturnType<typeof reportFor>>
   heatLabel: string
 }) {
   const params = section.parameters
-  const parsed = report?.parsedValues ?? []
   return (
     <View>
       <SectionTitle>{title}</SectionTitle>
@@ -157,15 +156,20 @@ function SectionGrid({
         </View>
       ) : (
         params.map((p) => {
-          const val = valueFor(parsed, p.name)
-          const outcome = val !== '--' && val !== '' ? validateValue(p, val) : undefined
-          const result = outcome ? outcome.result : 'PENDING'
+          const values = reports
+            .map((r) => valueFor(r?.parsedValues, p.name))
+            .filter((v) => v !== '--' && v !== '')
+          const outcomes = values.map((v) => validateValue(p, v))
+          const hasFail = outcomes.some((o) => o.result === 'FAIL')
+          const hasWarn = outcomes.some((o) => o.result === 'WARNING')
+          const result = values.length === 0 ? 'PENDING' : hasFail ? 'FAIL' : hasWarn ? 'WARNING' : 'PASS'
           const color = result === 'FAIL' ? '#b91c1c' : result === 'WARNING' ? '#a16207' : '#111827'
+          const observed = values.length > 0 ? values.join(', ') : '--'
           return (
             <View style={{ flexDirection: 'row' }} key={p.id}>
               <Cell style={{ width: 110 }}>{p.name}</Cell>
               <Cell style={{ width: 130 }}>{specFor(p)}</Cell>
-              <Cell center style={{ width: 90 }}>{val}</Cell>
+              <Cell center style={{ width: 90 }}>{observed}</Cell>
               <Cell center style={{ flex: 1 }}>
                 <Text style={{ ...bodyStyle, color }}>{result.replace('_', ' ')}</Text>
               </Cell>
@@ -173,26 +177,6 @@ function SectionGrid({
           )
         })
       )}
-    </View>
-  )
-}
-
-function HeatSection({
-  selection,
-  sample,
-  section,
-}: {
-  selection: CertificateHeatSelection
-  sample?: HeatSample
-  section: MasterSection
-}) {
-  const sampleId = sample?.id
-  const report = reportFor(selection, section.key, sampleId)
-  const heatLabel = sample ? sample.label : selection.heatCode
-  const title = `${section.name.toUpperCase()}${sample ? ` - SAMPLE ${sample.label}` : ''}`
-  return (
-    <View>
-      <SectionGrid title={title} section={section} report={report} heatLabel={heatLabel} />
     </View>
   )
 }
@@ -297,18 +281,20 @@ export function TestCertificateDocument({ certificate }: { certificate: Certific
           const sections = snap?.sections ?? []
           return (
             <View key={`${row.selection.id}-sections`} style={{ marginTop: 6 }}>
-              {row.contexts.map((ctx) => (
-                <View key={`${row.selection.id}-${ctx.sampleId ?? 'only'}`}>
-                  {sections.map((section) => (
-                    <HeatSection
-                      key={section.id}
-                      selection={row.selection}
-                      sample={ctx.sampleId ? row.heatRecord?.heats.find((s) => s.id === ctx.sampleId) : undefined}
-                      section={section}
-                    />
-                  ))}
-                </View>
-              ))}
+              {sections.map((section) => {
+                const reports = row.contexts.map((ctx) =>
+                  reportFor(row.selection, section.key, ctx.sampleId),
+                )
+                return (
+                  <SectionGrid
+                    key={section.id}
+                    title={section.name.toUpperCase()}
+                    section={section}
+                    reports={reports}
+                    heatLabel={row.selection.heatCode}
+                  />
+                )
+              })}
             </View>
           )
         })}

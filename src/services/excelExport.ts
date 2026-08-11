@@ -36,17 +36,18 @@ export function exportCertificateToExcel(certificate: Certificate): void {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Certificate Summary')
 
   const heatRows: (string | number)[][] = [
-    ['Sr. No.', 'SAP No.', 'Part No.', 'Description', 'Heat Code', 'Batch No.', 'Sample', 'Status'],
+    ['Sr. No.', 'SAP No.', 'Part No.', 'Description', 'Heat Code', 'Batch No.', 'Status'],
   ]
   cert.selectedHeats.forEach((selection, i) => {
-    const contexts = sampleContexts(selection, heatRecords)
-    if (contexts.length === 0) {
-      heatRows.push([i + 1, snap?.sapNo ?? '', snap?.partNo ?? '', snap?.description ?? '', selection.heatCode, selection.batchNo ?? '', 'Heat Code Only', selection.heatCodeOnly ? 'Heat Code Only' : ''])
-    } else {
-      contexts.forEach((ctx) => {
-        heatRows.push([i + 1, snap?.sapNo ?? '', snap?.partNo ?? '', snap?.description ?? '', selection.heatCode, selection.batchNo ?? '', ctx.label, selection.heatCodeOnly ? 'Heat Code Only' : ''])
-      })
-    }
+    heatRows.push([
+      i + 1,
+      snap?.sapNo ?? '',
+      snap?.partNo ?? '',
+      snap?.description ?? '',
+      selection.heatCode,
+      selection.batchNo ?? '',
+      selection.heatCodeOnly ? 'Heat Code Only' : '',
+    ])
   })
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(heatRows), 'Heat Summary')
 
@@ -54,36 +55,37 @@ export function exportCertificateToExcel(certificate: Certificate): void {
   for (const section of sections) {
     const rows: (string | number)[][] = [
       [section.name.toUpperCase()],
-      ['Heat Code', 'Sample', 'Parameter', 'Master Specification', 'Observed', 'Unit', 'Result'],
+      ['Heat Code', 'Parameter', 'Master Specification', 'Observed', 'Unit', 'Result'],
     ]
     for (const selection of cert.selectedHeats) {
       const contexts = sampleContexts(selection, heatRecords)
-      for (const ctx of contexts) {
-        const report = reportFor(selection, section.key, ctx.sampleId)
-        const parsed = report?.parsedValues ?? []
-        section.parameters.forEach((p) => {
-          const found = parsed.find((v) => matchParameter(p, v.name))
-          const value = found?.value ?? ''
-          const outcome = value ? validateValue(p, value) : undefined
-          rows.push([
-            selection.heatCode,
-            selection.heatCodeOnly ? 'Heat Code Only' : ctx.label,
-            p.name,
-            specFor(p),
-            value,
-            p.unit ?? '',
-            outcome ? outcome.result.replace('_', ' ') : 'PENDING',
-          ])
-        })
-      }
+      const reports = contexts.map((ctx) => reportFor(selection, section.key, ctx.sampleId))
+      const parsed = reports.map((r) => r?.parsedValues ?? [])
+      section.parameters.forEach((p) => {
+        const values = parsed
+          .map((ps) => ps.find((v) => matchParameter(p, v.name))?.value ?? '')
+          .filter((v) => v)
+        const observed = values.join(', ')
+        const outcomes = values.map((v) => validateValue(p, v))
+        const hasFail = outcomes.some((o) => o.result === 'FAIL')
+        const hasWarn = outcomes.some((o) => o.result === 'WARNING')
+        const result = values.length === 0 ? 'PENDING' : hasFail ? 'FAIL' : hasWarn ? 'WARNING' : 'PASS'
+        rows.push([
+          selection.heatCode,
+          p.name,
+          specFor(p),
+          observed,
+          p.unit ?? '',
+          result.replace('_', ' '),
+        ])
+      })
     }
     const ws = XLSX.utils.aoa_to_sheet(rows)
     ws['!cols'] = [
       { wch: 12 },
-      { wch: 12 },
       { wch: 26 },
       { wch: 26 },
-      { wch: 16 },
+      { wch: 22 },
       { wch: 8 },
       { wch: 12 },
     ]
