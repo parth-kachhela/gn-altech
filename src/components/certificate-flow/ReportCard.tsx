@@ -19,6 +19,7 @@ export interface ReportCardProps {
   onNearAround: () => void
   onOpenReview: (report: ReportRecord) => void
   onEditValues: (report: ReportRecord) => void
+  onRepeatUpper?: () => void
   parsing?: boolean
   canRepeatPrevious?: boolean
 }
@@ -34,6 +35,7 @@ export function ReportCard({
   onNearAround,
   onOpenReview,
   onEditValues,
+  onRepeatUpper,
   parsing,
   canRepeatPrevious = true,
 }: ReportCardProps) {
@@ -155,6 +157,12 @@ export function ReportCard({
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRepeatPrevious} disabled={parsing}>
               <Repeat className="h-3.5 w-3.5" />
               Repeat Previous
+            </Button>
+          ) : null}
+          {onRepeatUpper ? (
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRepeatUpper} disabled={parsing}>
+              <Repeat className="h-3.5 w-3.5" />
+              Repeat Upper
             </Button>
           ) : null}
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onNearAround} disabled={parsing}>

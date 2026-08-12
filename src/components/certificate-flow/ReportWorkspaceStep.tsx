@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { ReportCard } from '@/components/certificate-flow/ReportCard'
 import { ParsedReviewDialog } from '@/components/certificate-flow/ParsedReviewDialog'
 import { NearAroundDialog } from '@/components/certificate-flow/NearAroundDialog'
-import { sampleContexts, reportFor, heatSampleDisplayLabel } from '@/lib/certificateStatus'
+import { sampleContexts, reportFor, heatSampleDisplayLabel, isReportComplete } from '@/lib/certificateStatus'
 import { parseReport } from '@/services/parsers'
 import { saveReportBlob } from '@/lib/fileStorage'
 import { createId, nowIso } from '@/lib/id'
@@ -51,6 +51,22 @@ export function ReportWorkspaceStep({
     heatSampleId?: string
     heatSampleLabel?: string
   } | null>(null)
+
+  const sortedSelections = useMemo(() => {
+    if (!cert) return []
+    const sections = cert.productSnapshot.sections
+    const requiredSections = sections.filter((s) => s.required && s.parameters.length > 0)
+    const ranked = cert.selectedHeats.map((selection) => {
+      const contexts = sampleContexts(selection, heatRecords)
+      const complete = requiredSections.every((section) =>
+        contexts.every((ctx) =>
+          isReportComplete(reportFor(selection, section.key, ctx.sampleId), section),
+        ),
+      )
+      return { selection, complete }
+    })
+    return ranked.sort((a, b) => Number(b.complete) - Number(a.complete))
+  }, [cert, heatRecords])
 
   if (!cert) return null
 
@@ -216,6 +232,41 @@ export function ReportWorkspaceStep({
     toast.success(`Repeated from ${previousSelection.heatCode} — review required`)
   }
 
+  const applyRepeatUpper = (
+    selection: CertificateHeatSelection,
+    section: MasterSection,
+    targetSampleId: string,
+    targetSampleLabel: string,
+    sourceReport: ReportRecord,
+  ) => {
+    const report: ReportRecord = {
+      id: createId(),
+      sectionId: section.id,
+      sectionKey: section.key,
+      sectionName: section.name,
+      heatSampleId: targetSampleId,
+      heatSampleLabel: targetSampleLabel,
+      parsedValues: sourceReport.parsedValues.map((v) => ({ ...v })),
+      confirmed: false,
+      sourceType: 'REPEATED',
+      sourceRef: {
+        certificateId: cert.id,
+        heatCode: selection.heatCode,
+        heatSampleId: sourceReport.heatSampleId,
+        sectionKey: section.key,
+        reportId: sourceReport.id,
+      },
+      warnings: [],
+      uploadedBy: user?.name,
+      uploadedAt: nowIso(),
+    }
+    upsertReport(certId, selection.id, report)
+    setReportStatus(certId, selection.id, report.id, 'NEEDS_REVIEW')
+    addLog({ userId: user?.name ?? 'unknown', action: 'report_repeated', entityType: 'CERTIFICATE', after: { cert: cert.certificateNumber, heat: selection.heatCode, section: section.key, sample: targetSampleLabel } })
+    setReviewTarget({ selectionId: selection.id, report })
+    toast.success(`Repeated from upper sample — review required`)
+  }
+
   const applyNearAround = (values: ParsedValue[]) => {
     if (!nearTarget) return
     const { selectionId, section, heatSampleId, heatSampleLabel } = nearTarget
@@ -244,9 +295,10 @@ export function ReportWorkspaceStep({
 
   return (
     <div className="space-y-5">
-      {cert.selectedHeats.map((selection, heatIdx) => {
+      {sortedSelections.map(({ selection, complete: selectionComplete }, heatIdx) => {
         const contexts = sampleContexts(selection, heatRecords)
-        const previousSelection = heatIdx > 0 ? cert.selectedHeats[heatIdx - 1] : undefined
+        const previousSelection = heatIdx > 0 ? sortedSelections[heatIdx - 1].selection : undefined
+        const hasMultipleSamples = selection.selectedSamples.length > 1
         return (
           <Card key={selection.id}>
             <CardHeader className="pb-2">
@@ -256,48 +308,71 @@ export function ReportWorkspaceStep({
                 <Badge variant={selection.heatCodeOnly ? 'secondary' : 'default'}>
                   {selection.heatCodeOnly ? 'Heat Code Only' : `${selection.selectedSamples.length} sample(s)`}
                 </Badge>
+                {selectionComplete ? (
+                  <Badge className="bg-green-600 text-white">All reports complete</Badge>
+                ) : null}
               </div>
             </CardHeader>
             <CardContent>
-              {contexts.map((ctx) => (
-                <div key={ctx.sampleId ?? 'heat-only'}>
-                  <p className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {ctx.sampleId ? `Sample ${heatSampleDisplayLabel(selection.heatCode, ctx.label)}` : 'Heat Code Only'}
-                  </p>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {sections.map((section) => {
-                      const report = reportFor(selection, section.key, ctx.sampleId)
-                      return (
-                        <ReportCard
-                          key={section.id}
-                          section={section}
-                          report={report}
-                          heatCode={selection.heatCode}
-                          sampleLabel={ctx.sampleId ? heatSampleDisplayLabel(selection.heatCode, ctx.label) : undefined}
-                          parsing={parsing}
-                          onUpload={(file) =>
-                            handleUpload(selection.id, section.key, section.name, ctx.sampleId, ctx.label, file)
-                          }
-                          onRequestDepartment={() =>
-                            handleRequestDepartment(selection.id, section, ctx.label)
-                          }
-                          onRepeatPrevious={() =>
-                            previousSelection
-                              ? applyRepeatFromPrevious(selection.id, section, ctx.sampleId, ctx.label, previousSelection)
-                              : undefined
-                          }
-                          canRepeatPrevious={Boolean(previousSelection)}
-                          onNearAround={() =>
-                            setNearTarget({ selectionId: selection.id, section, heatSampleId: ctx.sampleId, heatSampleLabel: ctx.label })
-                          }
-                          onOpenReview={(r) => setReviewTarget({ selectionId: selection.id, report: r })}
-                          onEditValues={(r) => setReviewTarget({ selectionId: selection.id, report: r })}
-                        />
-                      )
-                    })}
+              {contexts.map((ctx, ctxIdx) => {
+                const upperCtx = ctxIdx > 0 ? contexts[ctxIdx - 1] : undefined
+                return (
+                  <div key={ctx.sampleId ?? 'heat-only'}>
+                    <p className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {ctx.sampleId ? `Sample ${heatSampleDisplayLabel(selection.heatCode, ctx.label)}` : 'Heat Code Only'}
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {sections.map((section) => {
+                        const report = reportFor(selection, section.key, ctx.sampleId)
+                        const upperReport =
+                          upperCtx?.sampleId && ctx.sampleId
+                            ? reportFor(selection, section.key, upperCtx.sampleId)
+                            : undefined
+                        const upperHasData = Boolean(
+                          upperReport && upperReport.confirmed && upperReport.parsedValues.length > 0,
+                        )
+                        const canRepeatUpper =
+                          hasMultipleSamples &&
+                          Boolean(ctx.sampleId && upperCtx?.sampleId) &&
+                          upperHasData &&
+                          !(report && report.parsedValues.length > 0)
+                        return (
+                          <ReportCard
+                            key={section.id}
+                            section={section}
+                            report={report}
+                            heatCode={selection.heatCode}
+                            sampleLabel={ctx.sampleId ? heatSampleDisplayLabel(selection.heatCode, ctx.label) : undefined}
+                            parsing={parsing}
+                            onUpload={(file) =>
+                              handleUpload(selection.id, section.key, section.name, ctx.sampleId, ctx.label, file)
+                            }
+                            onRequestDepartment={() =>
+                              handleRequestDepartment(selection.id, section, ctx.label)
+                            }
+                            onRepeatPrevious={() =>
+                              previousSelection
+                                ? applyRepeatFromPrevious(selection.id, section, ctx.sampleId, ctx.label, previousSelection)
+                                : undefined
+                            }
+                            canRepeatPrevious={Boolean(previousSelection)}
+                            onRepeatUpper={
+                              canRepeatUpper && upperReport
+                                ? () => applyRepeatUpper(selection, section, ctx.sampleId!, heatSampleDisplayLabel(selection.heatCode, ctx.label), upperReport)
+                                : undefined
+                            }
+                            onNearAround={() =>
+                              setNearTarget({ selectionId: selection.id, section, heatSampleId: ctx.sampleId, heatSampleLabel: ctx.label })
+                            }
+                            onOpenReview={(r) => setReviewTarget({ selectionId: selection.id, report: r })}
+                            onEditValues={(r) => setReviewTarget({ selectionId: selection.id, report: r })}
+                          />
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </CardContent>
           </Card>
         )
