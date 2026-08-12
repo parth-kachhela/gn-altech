@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CopyCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -267,6 +267,46 @@ export function ReportWorkspaceStep({
     toast.success(`Repeated from upper sample — review required`)
   }
 
+  const applyHeatCodeToAllSamples = (selection: CertificateHeatSelection) => {
+    const contexts = sampleContexts(selection, heatRecords)
+    let filled = 0
+    for (const ctx of contexts) {
+      if (!ctx.sampleId) continue
+      for (const section of sections) {
+        const existing = reportFor(selection, section.key, ctx.sampleId)
+        if (existing && existing.parsedValues.length > 0) continue
+        const source = reportFor(selection, section.key, undefined)
+        if (!source || !source.confirmed || source.parsedValues.length === 0) continue
+        const report: ReportRecord = {
+          id: createId(),
+          sectionId: section.id,
+          sectionKey: section.key,
+          sectionName: section.name,
+          heatSampleId: ctx.sampleId,
+          heatSampleLabel: ctx.label,
+          parsedValues: source.parsedValues.map((v) => ({ ...v })),
+          confirmed: true,
+          sourceType: 'REPEATED',
+          sourceRef: {
+            certificateId: cert.id,
+            heatCode: selection.heatCode,
+            heatSampleId: undefined,
+            sectionKey: section.key,
+            reportId: source.id,
+          },
+          warnings: [],
+          uploadedBy: user?.name,
+          uploadedAt: nowIso(),
+          status: 'COMPLETE',
+        }
+        upsertReport(certId, selection.id, report)
+        filled++
+      }
+    }
+    addLog({ userId: user?.name ?? 'unknown', action: 'report_repeated', entityType: 'CERTIFICATE', after: { cert: cert.certificateNumber, heat: selection.heatCode, samplesFilled: filled } })
+    toast.success(filled > 0 ? `Copied heat-code data to ${filled} sample report(s)` : 'No missing values to fill')
+  }
+
   const applyNearAround = (values: ParsedValue[]) => {
     if (!nearTarget) return
     const { selectionId, section, heatSampleId, heatSampleLabel } = nearTarget
@@ -299,6 +339,20 @@ export function ReportWorkspaceStep({
         const contexts = sampleContexts(selection, heatRecords)
         const previousSelection = heatIdx > 0 ? sortedSelections[heatIdx - 1].selection : undefined
         const hasMultipleSamples = selection.selectedSamples.length > 1
+        const heatLevelHasData = sections.some((s) => {
+          const r = reportFor(selection, s.key, undefined)
+          return Boolean(r && r.confirmed && r.parsedValues.length > 0)
+        })
+        const anySampleMissing = contexts.some(
+          (ctx) =>
+            ctx.sampleId &&
+            sections.some((s) => {
+              const r = reportFor(selection, s.key, ctx.sampleId)
+              return !r || r.parsedValues.length === 0
+            }),
+        )
+        const canCopyHeatToAll =
+          selection.selectedSamples.length > 0 && heatLevelHasData && anySampleMissing
         return (
           <Card key={selection.id}>
             <CardHeader className="pb-2">
@@ -318,9 +372,23 @@ export function ReportWorkspaceStep({
                 const upperCtx = ctxIdx > 0 ? contexts[ctxIdx - 1] : undefined
                 return (
                   <div key={ctx.sampleId ?? 'heat-only'}>
-                    <p className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {ctx.sampleId ? `Sample ${heatSampleDisplayLabel(selection.heatCode, ctx.label)}` : 'Heat Code Only'}
-                    </p>
+                    <div className="mb-2 mt-3 flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {ctx.sampleId ? `Sample ${heatSampleDisplayLabel(selection.heatCode, ctx.label)}` : 'Heat Code Only'}
+                      </p>
+                      {ctx.sampleId && canCopyHeatToAll ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => applyHeatCodeToAllSamples(selection)}
+                          disabled={parsing}
+                        >
+                          <CopyCheck className="h-3.5 w-3.5" />
+                          Copy Heat Code to All Samples
+                        </Button>
+                      ) : null}
+                    </div>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       {sections.map((section) => {
                         const report = reportFor(selection, section.key, ctx.sampleId)
