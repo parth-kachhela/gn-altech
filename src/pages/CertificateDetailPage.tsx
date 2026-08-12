@@ -219,7 +219,7 @@ export function CertificateDetailPage() {
                         <span className="font-mono text-sm font-semibold">{sel.heatCode}</span>
                         {sel.batchNo ? <Badge variant="outline">Batch {sel.batchNo}</Badge> : null}
                         <Badge variant={sel.heatCodeOnly ? 'secondary' : 'default'}>
-                          {sel.heatCodeOnly ? 'Heat Code Only' : `${contexts.length} sample(s)`}
+                          {sel.heatCodeOnly ? 'Heat Code Only' : `${sel.selectedSamples.length} sample(s)`}
                         </Badge>
                       </div>
                       {overallComplete ? (
@@ -242,7 +242,7 @@ export function CertificateDetailPage() {
                           >
                             <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                               <span className="font-mono text-xs font-medium">
-                                {sel.heatCodeOnly ? 'Heat Code Only' : `Sample ${ctx.label}`}
+                                {ctx.sampleId ? `Sample ${sel.heatCode}-${ctx.label}` : 'Heat Code Only'}
                                 {sample?.quantity ? (
                                   <span className="ml-1 font-normal text-muted-foreground">· {sample.quantity}</span>
                                 ) : null}

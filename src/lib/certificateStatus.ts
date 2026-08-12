@@ -13,14 +13,20 @@ export function sampleContexts(
   selection: CertificateHeatSelection,
   heatRecords: HeatRecord[],
 ): Array<{ sampleId?: string; label: string }> {
-  if (selection.heatCodeOnly) {
-    return [{ sampleId: undefined, label: 'Heat Code Only' }]
-  }
+  const contexts: Array<{ sampleId?: string; label: string }> = [
+    { sampleId: undefined, label: 'Heat Code Only' },
+  ]
+  if (selection.heatCodeOnly) return contexts
   const heatRecord = heatRecords.find((h) => h.id === selection.heatRecordId)
-  return selection.selectedSamples.map((id) => {
+  for (const id of selection.selectedSamples) {
     const sample = heatRecord?.heats.find((h) => h.id === id)
-    return { sampleId: id, label: sample?.label ?? id }
-  })
+    contexts.push({ sampleId: id, label: sample?.label ?? id })
+  }
+  return contexts
+}
+
+export function heatSampleDisplayLabel(heatCode: string, sampleLabel?: string): string {
+  return sampleLabel ? `${heatCode}-${sampleLabel}` : 'Heat Code Only'
 }
 
 export function reportFor(

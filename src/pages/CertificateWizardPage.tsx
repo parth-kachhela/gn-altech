@@ -600,7 +600,7 @@ export function HeatsStep({
                                       disabled={!isSel}
                                       onCheckedChange={() => isSel && toggleSample(h, s.id)}
                                     />
-                                    <span className="font-mono text-xs">{s.label}</span>
+                                    <span className="font-mono text-xs">{h.heatCode}-{s.label}</span>
                                     {s.quantity ? <span className="text-xs text-muted-foreground">· {s.quantity}</span> : null}
                                   </label>
                                   {isSel && checked ? (
@@ -683,7 +683,7 @@ export function HeatsStep({
                           <span className="font-mono text-sm font-semibold">{sel.heatCode}</span>
                           {sel.batchNo ? <Badge variant="outline">Batch {sel.batchNo}</Badge> : null}
                           <Badge variant={sel.heatCodeOnly ? 'secondary' : 'default'}>
-                            {sel.heatCodeOnly ? 'Heat Code Only' : `${contexts.length} sample(s)`}
+                            {sel.heatCodeOnly ? 'Heat Code Only' : `${sel.selectedSamples.length} sample(s)`}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2">
@@ -719,7 +719,7 @@ export function HeatsStep({
                             <div key={ctx.sampleId ?? 'heat-only'} className="flex flex-col rounded-md border">
                               <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                                 <span className="font-mono text-xs font-medium">
-                                  {sel.heatCodeOnly ? 'Heat Code Only' : `Sample ${ctx.label}`}
+                                  {ctx.sampleId ? `Sample ${sel.heatCode}-${ctx.label}` : 'Heat Code Only'}
                                   {sample?.quantity ? (
                                     <span className="ml-1 font-normal text-muted-foreground">· {sample.quantity}</span>
                                   ) : null}

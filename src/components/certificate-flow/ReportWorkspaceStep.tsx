@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { ReportCard } from '@/components/certificate-flow/ReportCard'
 import { ParsedReviewDialog } from '@/components/certificate-flow/ParsedReviewDialog'
 import { NearAroundDialog } from '@/components/certificate-flow/NearAroundDialog'
-import { sampleContexts, reportFor } from '@/lib/certificateStatus'
+import { sampleContexts, reportFor, heatSampleDisplayLabel } from '@/lib/certificateStatus'
 import { parseReport } from '@/services/parsers'
 import { saveReportBlob } from '@/lib/fileStorage'
 import { createId, nowIso } from '@/lib/id'
@@ -174,9 +174,15 @@ export function ReportWorkspaceStep({
     previousSelection: CertificateHeatSelection,
   ) => {
     const prevContexts = sampleContexts(previousSelection, heatRecords)
-    const sourceSampleId = heatSampleId
-      ? prevContexts.find((c) => c.label === heatSampleLabel)?.sampleId
-      : undefined
+    let sourceSampleId: string | undefined
+    if (heatSampleId) {
+      const match = prevContexts.find((c) => c.label === heatSampleLabel)
+      if (!match) {
+        toast.error(`No confirmed ${section.name} data in the previous heat (${previousSelection.heatCode}) for ${heatSampleLabel}.`)
+        return
+      }
+      sourceSampleId = match.sampleId
+    }
     const sourceReport = reportFor(previousSelection, section.key, sourceSampleId)
     if (!sourceReport || !sourceReport.confirmed || sourceReport.parsedValues.length === 0) {
       toast.error(`No confirmed ${section.name} data in the previous heat (${previousSelection.heatCode})${heatSampleLabel ? ` for ${heatSampleLabel}` : ''}.`)
@@ -248,18 +254,16 @@ export function ReportWorkspaceStep({
                 <CardTitle className="text-base font-mono">{selection.heatCode}</CardTitle>
                 {selection.batchNo ? <Badge variant="outline">Batch {selection.batchNo}</Badge> : null}
                 <Badge variant={selection.heatCodeOnly ? 'secondary' : 'default'}>
-                  {selection.heatCodeOnly ? 'Heat Code Only' : `${contexts.length} sample(s)`}
+                  {selection.heatCodeOnly ? 'Heat Code Only' : `${selection.selectedSamples.length} sample(s)`}
                 </Badge>
               </div>
             </CardHeader>
             <CardContent>
               {contexts.map((ctx) => (
-                <div key={ctx.sampleId ?? 'only'}>
-                  {!selection.heatCodeOnly ? (
-                    <p className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Sample {ctx.label}
-                    </p>
-                  ) : null}
+                <div key={ctx.sampleId ?? 'heat-only'}>
+                  <p className="mb-2 mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {ctx.sampleId ? `Sample ${heatSampleDisplayLabel(selection.heatCode, ctx.label)}` : 'Heat Code Only'}
+                  </p>
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {sections.map((section) => {
                       const report = reportFor(selection, section.key, ctx.sampleId)
@@ -269,7 +273,7 @@ export function ReportWorkspaceStep({
                           section={section}
                           report={report}
                           heatCode={selection.heatCode}
-                          sampleLabel={selection.heatCodeOnly ? undefined : ctx.label}
+                          sampleLabel={ctx.sampleId ? heatSampleDisplayLabel(selection.heatCode, ctx.label) : undefined}
                           parsing={parsing}
                           onUpload={(file) =>
                             handleUpload(selection.id, section.key, section.name, ctx.sampleId, ctx.label, file)

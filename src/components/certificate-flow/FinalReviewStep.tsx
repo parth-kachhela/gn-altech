@@ -205,23 +205,28 @@ export function FinalReviewStep({
             </CardHeader>
             <CardContent className="space-y-4">
               {contexts.map((ctx) => (
-                <div key={ctx.sampleId ?? 'only'}>
-                  {!selection.heatCodeOnly ? (
-                    <div className="mb-2 flex items-center gap-2">
+                <div key={ctx.sampleId ?? 'heat-only'}>
+                  <div className="mb-2 flex items-center gap-2">
+                    {ctx.sampleId ? (
+                      <>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Sample
+                        </p>
+                        <div className="flex items-center gap-0.5">
+                          <span className="font-mono text-xs">{selection.heatCode}-</span>
+                          <Input
+                            className="h-7 w-12 font-mono text-xs"
+                            value={ctx.label}
+                            onChange={(e) => setSampleLabel(selection, ctx.sampleId!, e.target.value)}
+                          />
+                        </div>
+                      </>
+                    ) : (
                       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        Sample
+                        Heat Code Only
                       </p>
-                      {ctx.sampleId ? (
-                        <Input
-                          className="h-7 w-32 font-mono text-xs"
-                          value={ctx.label}
-                          onChange={(e) => setSampleLabel(selection, ctx.sampleId!, e.target.value)}
-                        />
-                      ) : (
-                        <span className="font-mono text-xs">{ctx.label}</span>
-                      )}
-                    </div>
-                  ) : null}
+                    )}
+                  </div>
                   <div className="overflow-x-auto rounded-md border">
                     <Table>
                       <TableHeader>

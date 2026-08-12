@@ -83,7 +83,7 @@ export function HeatRecordForm({
   }
 
   const addSample = () => {
-    const label = String(samples.length + 1).padStart(2, '0')
+    const label = String.fromCharCode(65 + samples.length)
     const id = createId()
     setSamples((s) => [...s, { id, label }])
     if (master) selectAllDefaultsFor(master, id)
@@ -135,7 +135,7 @@ export function HeatRecordForm({
       batchNo: batchNo.trim() || undefined,
       quantity: quantity.trim() || undefined,
       date: date || undefined,
-      heats: samples.map((s, i) => ({ id: s.id, label: s.label.trim() || String(i + 1).padStart(2, '0'), quantity: s.quantity })),
+      heats: samples.map((s, i) => ({ id: s.id, label: s.label.trim() || String.fromCharCode(65 + i), quantity: s.quantity })),
       demoReports: initial?.demoReports ?? {},
       requests,
       reports: initial?.reports ?? [],
@@ -250,7 +250,7 @@ export function HeatRecordForm({
         <CardContent className="space-y-2">
           {samples.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Add sample numbers for this heat. Sample numbers start at 01.
+              Add sample letters for this heat. Samples are named after the heat code (e.g. A6A-A).
             </p>
           ) : (
             samples.map((s) => (
@@ -260,7 +260,7 @@ export function HeatRecordForm({
                   onChange={(e) =>
                     setSamples((arr) => arr.map((x) => (x.id === s.id ? { ...x, label: e.target.value } : x)))
                   }
-                  placeholder="Sample no."
+                  placeholder="Sample letter"
                   className="w-40"
                 />
                 <Input
@@ -295,27 +295,24 @@ export function HeatRecordForm({
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {samples.length === 0 ? (
+            <DepartmentRequestGroup
+              key="HEAT"
+              sampleId={undefined}
+              sampleLabel="Heat Code (heat level)"
+              sections={master.sections}
+              selectedRequests={selectedRequests}
+              onToggle={toggleRequest}
+            />
+            {samples.map((s) => (
               <DepartmentRequestGroup
-                key="HEAT"
-                sampleId={undefined}
-                sampleLabel="Heat Code (no samples)"
+                key={s.id}
+                sampleId={s.id}
+                sampleLabel={`Sample ${s.label}`}
                 sections={master.sections}
                 selectedRequests={selectedRequests}
                 onToggle={toggleRequest}
               />
-            ) : (
-              samples.map((s) => (
-                <DepartmentRequestGroup
-                  key={s.id}
-                  sampleId={s.id}
-                  sampleLabel={`Sample ${s.label}`}
-                  sections={master.sections}
-                  selectedRequests={selectedRequests}
-                  onToggle={toggleRequest}
-                />
-              ))
-            )}
+            ))}
           </CardContent>
         </Card>
       ) : null}

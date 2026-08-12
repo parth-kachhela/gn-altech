@@ -44,16 +44,15 @@ function demoHeatDate(index: number): string {
 
 function demoSamplesFor(
   defaultSample: string | undefined,
-  quantity: string | undefined,
   count: number,
 ): HeatSample[] {
-  if (!defaultSample || count <= 0) return []
-  const base = parseInt(defaultSample, 10)
-  const start = Number.isNaN(base) ? 1 : base
+  if (count <= 0) return []
+  const base = defaultSample?.trim().toUpperCase().charCodeAt(0) ?? 0
+  const start = base >= 65 && base <= 90 ? base : 65
   return Array.from({ length: count }, (_, i) => ({
     id: createId(),
-    label: String(start + i).padStart(2, '0'),
-    quantity,
+    label: String.fromCharCode(start + i),
+    quantity: undefined,
   }))
 }
 
@@ -112,8 +111,11 @@ export async function seedDemoMaster(userName: string): Promise<SeedOutcome> {
   let heatsUpdated = 0
   result.heats.forEach((heat, index) => {
     const master = useProductMasterStore.getState().getActiveMasterBySap(heat.sapNo)
-    const samples = demoSamplesFor(heat.defaultSample, heat.quantity, DEMO_SAMPLE_COUNTS[heat.heatCode] ?? 1)
-    const targets = samples.length > 0 ? samples : [{ id: undefined, label: undefined }]
+    const samples = demoSamplesFor(heat.defaultSample, DEMO_SAMPLE_COUNTS[heat.heatCode] ?? 1)
+    const targets: Array<{ id: string | undefined; label: string | undefined }> = [
+      { id: undefined, label: undefined },
+      ...samples,
+    ]
     const requests: HeatReportRequest[] = master
       ? master.sections
           .filter((s) => s.required)

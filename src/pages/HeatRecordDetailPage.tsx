@@ -43,10 +43,10 @@ export function HeatRecordDetailPage() {
 
   const demoCount = Object.keys(record.demoReports ?? {}).length
 
-  const sampleGroups: Array<{ sampleId?: string; label: string; quantity?: string }> =
-    record.heats.length > 0
-      ? record.heats.map((s) => ({ sampleId: s.id, label: s.label, quantity: s.quantity }))
-      : [{ sampleId: undefined, label: 'Heat Code Only', quantity: undefined }]
+  const sampleGroups: Array<{ sampleId?: string; label: string; quantity?: string }> = [
+    { sampleId: undefined, label: 'Heat Code Only', quantity: undefined },
+    ...record.heats.map((s) => ({ sampleId: s.id, label: s.label, quantity: s.quantity })),
+  ]
 
   const knownSampleIds = new Set(record.heats.map((s) => s.id))
   const unlinkedIds = Array.from(
@@ -144,7 +144,7 @@ export function HeatRecordDetailPage() {
             <div className="flex flex-wrap gap-2">
               {record.heats.map((s) => (
                 <Badge key={s.id} variant="outline" className="px-3 py-1 font-mono">
-                  {s.label}
+                  {record.heatCode}-{s.label}
                   {s.quantity ? ` · ${s.quantity}` : ''}
                 </Badge>
               ))}
@@ -170,7 +170,7 @@ export function HeatRecordDetailPage() {
                   <div key={group.sampleId ?? 'only'} className="rounded-md border">
                     <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                       <span className="font-mono text-xs font-medium">
-                        {record.heats.length === 0 ? 'Heat Code Only' : `Sample ${group.label}`}
+                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : 'Heat Code Only'}
                       </span>
                       <span className="text-xs text-muted-foreground">{reqs.length} request(s)</span>
                     </div>
@@ -222,7 +222,7 @@ export function HeatRecordDetailPage() {
                   <div key={group.sampleId ?? 'only'} className="rounded-md border bg-background">
                     <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                       <span className="font-mono text-xs font-medium">
-                        {record.heats.length === 0 ? 'Heat Code Only' : `Sample ${group.label}`}
+                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : 'Heat Code Only'}
                         {group.quantity ? (
                           <span className="ml-1 font-normal text-muted-foreground">· {group.quantity}</span>
                         ) : null}

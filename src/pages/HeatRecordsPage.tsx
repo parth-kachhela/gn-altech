@@ -193,7 +193,7 @@ export function HeatRecordsPage() {
                               <span className="text-xs text-muted-foreground">—</span>
                             ) : (
                               h.heats.map((s) => (
-                                <Badge key={s.id} variant="outline">{s.label}</Badge>
+                                <Badge key={s.id} variant="outline">{h.heatCode}-{s.label}</Badge>
                               ))
                             )}
                           </div>
