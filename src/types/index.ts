@@ -197,6 +197,7 @@ export interface CertificateHeatSelection {
   heatCode: string
   batchNo?: string
   heatCodeOnly: boolean
+  includeHeatLevel?: boolean
   selectedSamples: string[]
   reportRecords: ReportRecord[]
 }

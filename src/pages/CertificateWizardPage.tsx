@@ -374,7 +374,16 @@ export function HeatsStep({
     if (included) {
       const remaining = sel.selectedSamples.filter((id) => id !== sampleId)
       if (remaining.length === 0) {
-        removeHeatSelection(certId, sel.id)
+        if (sel.includeHeatLevel === false) {
+          removeHeatSelection(certId, sel.id)
+          return
+        }
+        setSelection(certId, {
+          ...sel,
+          heatCodeOnly: true,
+          selectedSamples: [],
+          reportRecords: sel.reportRecords.filter((r) => r.heatSampleId === undefined),
+        })
         return
       }
       setSelection(certId, {
@@ -383,10 +392,35 @@ export function HeatsStep({
         reportRecords: sel.reportRecords.filter((r) => r.heatSampleId !== sampleId),
       })
     } else {
-      setSelection(certId, { ...sel, selectedSamples: [...sel.selectedSamples, sampleId] })
+      setSelection(certId, {
+        ...sel,
+        heatCodeOnly: false,
+        selectedSamples: [...sel.selectedSamples, sampleId],
+      })
       for (const report of buildReportsFromHeat(heat).filter((r) => r.heatSampleId === sampleId)) {
         upsertReport(certId, sel.id, report)
       }
+    }
+  }
+
+  const toggleHeatLevel = (heat: HeatRecord) => {
+    if (!cert) return
+    const sel = selected.find((s) => s.heatRecordId === heat.id)
+    if (!sel) return
+    const includeHeatLevel = sel.includeHeatLevel ?? true
+    if (includeHeatLevel) {
+      if (heat.heats.length === 0) return
+      if (sel.selectedSamples.length === 0) {
+        removeHeatSelection(certId, sel.id)
+        return
+      }
+      setSelection(certId, { ...sel, includeHeatLevel: false })
+    } else {
+      setSelection(certId, {
+        ...sel,
+        includeHeatLevel: true,
+        heatCodeOnly: sel.selectedSamples.length === 0,
+      })
     }
   }
 
@@ -396,7 +430,7 @@ export function HeatsStep({
     if (!sel) return
     const all = heat.heats.map((h) => h.id)
     const missing = all.filter((id) => !sel.selectedSamples.includes(id))
-    setSelection(certId, { ...sel, selectedSamples: all })
+    setSelection(certId, { ...sel, heatCodeOnly: false, selectedSamples: all })
     for (const sampleId of missing) {
       for (const report of buildReportsFromHeat(heat).filter((r) => r.heatSampleId === sampleId)) {
         upsertReport(certId, sel.id, report)
@@ -419,6 +453,7 @@ export function HeatsStep({
       heatCode: heat.heatCode,
       batchNo: heat.batchNo,
       heatCodeOnly: heat.heats.length === 0,
+      includeHeatLevel: true,
       selectedSamples: heat.heats.map((h) => h.id),
       reportRecords: [],
     }
@@ -586,6 +621,24 @@ export function HeatsStep({
 
                     {expanded ? (
                       <div className="mt-2 space-y-1.5 border-t pt-2 pl-11">
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <label className="flex items-center gap-2">
+                            <Checkbox
+                              checked={isSel ? (sel?.includeHeatLevel ?? true) : false}
+                              disabled={!isSel || h.heats.length === 0}
+                              onCheckedChange={() => isSel && toggleHeatLevel(h)}
+                            />
+                            <span className="font-mono text-xs">Main Heat Level</span>
+                            {h.heats.length === 0 ? (
+                              <span className="text-xs text-muted-foreground">· only</span>
+                            ) : null}
+                          </label>
+                          {isSel && (sel?.includeHeatLevel ?? true) ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                          ) : isSel ? (
+                            <span className="text-xs text-muted-foreground">not included</span>
+                          ) : null}
+                        </div>
                         {h.heats.length === 0 ? (
                           <p className="text-xs text-muted-foreground">No samples linked to this heat code.</p>
                         ) : (

@@ -13,9 +13,10 @@ export function sampleContexts(
   selection: CertificateHeatSelection,
   heatRecords: HeatRecord[],
 ): Array<{ sampleId?: string; label: string }> {
-  const contexts: Array<{ sampleId?: string; label: string }> = [
-    { sampleId: undefined, label: 'Heat Code Only' },
-  ]
+  const contexts: Array<{ sampleId?: string; label: string }> = []
+  if (selection.includeHeatLevel !== false) {
+    contexts.push({ sampleId: undefined, label: 'Heat Code Only' })
+  }
   if (selection.heatCodeOnly) return contexts
   const heatRecord = heatRecords.find((h) => h.id === selection.heatRecordId)
   for (const id of selection.selectedSamples) {
