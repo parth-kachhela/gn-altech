@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { PageHeader } from '@/components/PageHeader'
 import { BulkReviewTable } from '@/components/workflow/BulkReviewTable'
 import { processQueuedFile, type IngestItem } from '@/services/bulkIngest'
@@ -13,6 +12,7 @@ import { assignPreviewSamples, groupBySapHeat, resolveGroupLabels } from '@/lib/
 import { saveReportBlob } from '@/lib/fileStorage'
 import { createId, nowIso } from '@/lib/id'
 import { toast } from 'sonner'
+import { UploadCloud } from 'lucide-react'
 
 const FOUR = ['CHEMICAL', 'MICRO', 'TENSILE', 'HARDNESS'] as const
 const NAMES: Record<string, string> = { CHEMICAL: 'Chemical Analysis', MICRO: 'Micro Structure', TENSILE: 'Tensile', HARDNESS: 'Hardness' }
@@ -85,6 +85,27 @@ export function ChemicalBulkUploadPage() {
   const retryOne = (id: string) => {
     patch(id, { status: 'QUEUED', progress: 0, stage: 'Waiting in queue…', message: 'Waiting in queue…', queueLabel: 'Waiting in queue' })
     setTimeout(() => { void runQueue([id]) }, 50)
+    toast.info('Re-processing file extraction…')
+  }
+
+  const handleRemoveFile = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id))
+    toast.info('File upload cancelled')
+  }
+
+  const handleReplaceFile = (id: string, newFile: File) => {
+    patch(id, {
+      file: newFile,
+      status: 'QUEUED',
+      progress: 0,
+      stage: 'Waiting in queue…',
+      message: 'Waiting in queue…',
+      values: [],
+    })
+    setTimeout(() => {
+      void runQueue([id])
+    }, 50)
+    toast.success(`Replaced with ${newFile.name} — reprocessing`)
   }
 
   const submitSingleReport = (itemToSubmit: IngestItem) => {
@@ -274,12 +295,13 @@ export function ChemicalBulkUploadPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-4">
       <PageHeader
         title="Bulk Chemical Upload"
         description="Upload 10, 20, 50+ PDFs at once. Each file is auto-matched to its Heat Code and editable directly on the page."
         actions={
           <Button onClick={() => inputRef.current?.click()} disabled={processing}>
+            <UploadCloud className="h-4 w-4 mr-2" />
             {processing ? 'Processing…' : 'Select PDFs'}
           </Button>
         }
@@ -295,37 +317,54 @@ export function ChemicalBulkUploadPage() {
           e.target.value = ''
         }}
       />
-      <Card
-        className="cursor-pointer border-dashed"
+      <div
+        role="button"
+        tabIndex={0}
+        className="cursor-pointer rounded-lg border-2 border-dashed border-primary/30 bg-muted/20 p-8 text-center transition-all hover:border-primary hover:bg-muted/50 hover:shadow-xs focus:outline-hidden focus:ring-2 focus:ring-primary/20"
         onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            inputRef.current?.click()
+          }
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
           onFiles(e.dataTransfer.files)
         }}
       >
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Drag &amp; drop chemical PDFs here, or click to browse. Files are parsed automatically and rendered for inline review below.
-        </CardContent>
-      </Card>
-      <div className="mt-4">
-        <BulkReviewTable
-          items={items}
-          onChange={patch}
-          onAcceptAll={() =>
-            setItems((arr) =>
-              arr.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)),
-            )
-          }
-          onSubmitAll={submitAll}
-          onSubmitOne={(id) => {
-            const it = items.find((i) => i.id === id)
-            if (it) submitSingleReport(it)
-          }}
-          submitting={submitting}
-          onRetry={retryOne}
-        />
+        <UploadCloud className="mx-auto h-10 w-10 text-primary/70 mb-2" />
+        <div className="text-sm font-semibold text-foreground">
+          Click anywhere here or drag &amp; drop Chemical PDF reports
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          Bulk upload supported (10, 20, 50+ files). Files are parsed automatically and rendered for inline review below.
+        </div>
       </div>
+      {items.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          <h3 className="text-sm font-semibold">Parsed Reports Ready for Review ({items.length})</h3>
+          <BulkReviewTable
+            items={items}
+            onChange={patch}
+            onAcceptAll={() =>
+              setItems((arr) =>
+                arr.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)),
+              )
+            }
+            onSubmitAll={submitAll}
+            onSubmitOne={(id) => {
+              const it = items.find((i) => i.id === id)
+              if (it) submitSingleReport(it)
+            }}
+            onRemove={handleRemoveFile}
+            onReplaceFile={handleReplaceFile}
+            onRetry={retryOne}
+            submitting={submitting}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }

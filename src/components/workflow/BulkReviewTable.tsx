@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { IngestBadge } from '@/components/workflow/WorkflowBadges'
+import { RotateCw, FileEdit, Trash2, Image, Check, Sparkles } from 'lucide-react'
 import type { IngestItem } from '@/services/bulkIngest'
 
 const IMAGE_EXT = /\.(bmp|png|jpg|jpeg)$/i
@@ -15,6 +16,8 @@ export function BulkReviewTable({
   onAcceptAll,
   onSubmitAll,
   onSubmitOne,
+  onRemove,
+  onReplaceFile,
   submitting,
   onRetry,
 }: {
@@ -23,6 +26,8 @@ export function BulkReviewTable({
   onAcceptAll: () => void
   onSubmitAll: () => void
   onSubmitOne?: (id: string) => void
+  onRemove?: (id: string) => void
+  onReplaceFile?: (id: string, newFile: File) => void
   submitting: boolean
   onRetry?: (id: string) => void
   pendingHeats?: Array<{ heatCode: string; sapNo: string; partName?: string }>
@@ -30,6 +35,7 @@ export function BulkReviewTable({
 }) {
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({})
   const [newParams, setNewParams] = useState<Record<string, { name: string; value: string }>>({})
+  const replaceInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   if (items.length === 0) return null
 
@@ -84,13 +90,14 @@ export function BulkReviewTable({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={onAcceptAll}>
+            <Check className="h-3.5 w-3.5 mr-1 text-emerald-600" />
             Accept All Matched
           </Button>
           <Button
             size="sm"
             onClick={onSubmitAll}
             disabled={submitting || done === 0}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-xs"
           >
             {submitting ? 'Submitting…' : `Submit All Reports (${done}/${items.length} Ready)`}
           </Button>
@@ -109,42 +116,98 @@ export function BulkReviewTable({
           const np = newParams[it.id] || { name: '', value: '' }
 
           return (
-            <Card key={it.id} className="border transition-all shadow-sm hover:border-primary/40">
+            <Card key={it.id} className="border transition-all shadow-sm hover:border-primary/40 overflow-hidden">
               <CardContent className="p-4 space-y-3">
-                {/* Header Row: File Name, Sample Tag, Status, Submit Button */}
+                {/* Header Row: File Name, Sample Tag, Status & Action Toolbar */}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs font-semibold text-muted-foreground font-mono">#{idx + 1}</span>
+                  <div className="flex items-center gap-2 min-w-0 max-w-full sm:max-w-[55%]">
+                    <span className="text-xs font-semibold text-muted-foreground font-mono shrink-0">#{idx + 1}</span>
                     <span className="font-mono text-sm font-semibold truncate text-foreground" title={it.file.name}>
                       {it.file.name}
                     </span>
                     {it.assignedSample ? (
-                      <Badge variant="default" className="bg-blue-600 text-white font-bold text-xs">
+                      <Badge variant="default" className="bg-blue-600 text-white font-bold text-xs shrink-0">
                         Sample {it.assignedSample}
                       </Badge>
                     ) : null}
                     {it.demoMatch ? (
-                      <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400 bg-amber-50">
-                        Lab Match
+                      <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400 bg-amber-50 shrink-0">
+                        <Sparkles className="h-3 w-3 mr-0.5 inline" /> Lab Match
                       </Badge>
                     ) : null}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  {/* Card Actions: Retry, Change File, Cancel/Remove, Submit */}
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <IngestBadge status={it.status} />
 
-                    {it.status === 'FAILED' && onRetry ? (
-                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onRetry(it.id)}>
+                    {/* Hidden input for changing this specific file */}
+                    <input
+                      type="file"
+                      accept=".pdf,.bmp,.png,.jpg,.jpeg"
+                      className="hidden"
+                      ref={(el) => { replaceInputRefs.current[it.id] = el }}
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0] && onReplaceFile) {
+                          onReplaceFile(it.id, e.target.files[0])
+                        }
+                        e.target.value = ''
+                      }}
+                    />
+
+                    {/* Change File Button */}
+                    {onReplaceFile ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs px-2.5"
+                        title="Change or replace this report file"
+                        onClick={() => replaceInputRefs.current[it.id]?.click()}
+                      >
+                        <FileEdit className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
+                        Change File
+                      </Button>
+                    ) : null}
+
+                    {/* Retry Button */}
+                    {onRetry ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs px-2.5"
+                        title="Re-run extraction on this file"
+                        onClick={() => onRetry(it.id)}
+                      >
+                        <RotateCw className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
                         Retry
                       </Button>
                     ) : null}
 
+                    {/* Cancel / Remove Button */}
+                    {onRemove ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs px-2.5 text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                        title="Cancel and remove this file upload"
+                        onClick={() => onRemove(it.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 mr-1" />
+                        Cancel
+                      </Button>
+                    ) : null}
+
+                    {/* Submit Single Report Button */}
                     {onSubmitOne && isReadyToSubmit ? (
                       <Button
+                        type="button"
                         size="sm"
                         disabled={submitting}
                         onClick={() => onSubmitOne(it.id)}
-                        className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs px-3"
+                        className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs px-3 shadow-2xs"
                       >
                         Submit Report
                       </Button>
@@ -207,6 +270,7 @@ export function BulkReviewTable({
                             className="h-8 text-xs w-full"
                             onClick={() => toggleImagePreview(it.id, it.file)}
                           >
+                            <Image className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
                             {previewUrl ? 'Hide Micro Image' : 'View Micro Image'}
                           </Button>
                         ) : (
@@ -223,7 +287,7 @@ export function BulkReviewTable({
                         <img
                           src={previewUrl}
                           alt={it.file.name}
-                          className="max-h-48 rounded border mx-auto object-contain"
+                          className="max-h-48 rounded border mx-auto object-contain shadow-xs"
                         />
                       </div>
                     ) : null}

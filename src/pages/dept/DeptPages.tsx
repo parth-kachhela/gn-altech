@@ -21,6 +21,7 @@ import { assignPreviewSamples, groupBySapHeat, resolveGroupLabels } from '@/lib/
 import { createId, nowIso } from '@/lib/id'
 import { toast } from 'sonner'
 import { DEPT_CONFIG } from '@/pages/dept/deptConfig'
+import { UploadCloud } from 'lucide-react'
 
 export function DeptDashboardPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness' }) {
   const cfg = DEPT_CONFIG[dept]
@@ -124,6 +125,7 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
   const [processing, setProcessing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [singleHeat, setSingleHeat] = useState(preselect)
+  const dropzoneInputRef = useRef<HTMLInputElement>(null)
   const user = useAuthStore((s) => s.user)
   const addLog = useAuditStore((s) => s.addLog)
 
@@ -274,6 +276,27 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
   const retryOne = (id: string) => {
     patch(id, { status: 'QUEUED', progress: 0, stage: 'Waiting in queue…', message: 'Waiting in queue…' })
     setTimeout(() => { void runQueue([id]) }, 50)
+    toast.info('Re-processing file extraction…')
+  }
+
+  const handleRemoveFile = (id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id))
+    toast.info('File upload cancelled')
+  }
+
+  const handleReplaceFile = (id: string, newFile: File) => {
+    patch(id, {
+      file: newFile,
+      status: 'QUEUED',
+      progress: 0,
+      stage: 'Waiting in queue…',
+      message: 'Waiting in queue…',
+      values: [],
+    })
+    setTimeout(() => {
+      void runQueue([id])
+    }, 50)
+    toast.success(`Replaced with ${newFile.name} — reprocessing`)
   }
 
   const submitSingleReport = (itemToSubmit: IngestItem) => {
@@ -477,38 +500,55 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
               className="font-mono text-sm"
             />
           </div>
-          <label className="text-sm">
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.bmp,.png,.jpg,.jpeg"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files) onFiles(e.target.files)
-                e.target.value = ''
-              }}
-            />
-            <Button asChild disabled={processing}>
-              <span>{processing ? 'Processing Reports…' : 'Select Files to Upload'}</span>
-            </Button>
-          </label>
+          <Button
+            type="button"
+            onClick={() => dropzoneInputRef.current?.click()}
+            disabled={processing}
+          >
+            <UploadCloud className="h-4 w-4 mr-2" />
+            <span>{processing ? 'Processing Reports…' : 'Select Files to Upload'}</span>
+          </Button>
           <span className="text-xs text-muted-foreground">PDF, BMP, PNG, JPG/JPEG supported.</span>
         </CardContent>
       </Card>
 
+      {/* Hidden file input controlled by dropzone & button */}
+      <input
+        ref={dropzoneInputRef}
+        type="file"
+        multiple
+        accept=".pdf,.bmp,.png,.jpg,.jpeg"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files) onFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+
+      {/* Clickable Drag & Drop Zone */}
       <div
-        className="cursor-pointer rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center transition-colors hover:border-primary/50 hover:bg-muted/50"
+        role="button"
+        tabIndex={0}
+        className="cursor-pointer rounded-lg border-2 border-dashed border-primary/30 bg-muted/20 p-8 text-center transition-all hover:border-primary hover:bg-muted/50 hover:shadow-xs focus:outline-hidden focus:ring-2 focus:ring-primary/20"
+        onClick={() => dropzoneInputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            dropzoneInputRef.current?.click()
+          }
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault()
           onFiles(e.dataTransfer.files)
         }}
       >
-        <div className="text-sm font-medium text-foreground">
-          Drag &amp; drop {cfg.sectionName} reports here for bulk upload (10, 20, 50+ files)
+        <UploadCloud className="mx-auto h-10 w-10 text-primary/70 mb-2" />
+        <div className="text-sm font-semibold text-foreground">
+          Click anywhere here or drag &amp; drop {cfg.sectionName} reports
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          System automatically reads values and matches against pending heats in queue.
+          Bulk upload supported (10, 20, 50+ files). System reads values &amp; matches pending heats automatically.
         </div>
       </div>
 
@@ -529,8 +569,10 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
               const it = items.find((i) => i.id === id)
               if (it) submitSingleReport(it)
             }}
-            submitting={submitting}
+            onRemove={handleRemoveFile}
+            onReplaceFile={handleReplaceFile}
             onRetry={retryOne}
+            submitting={submitting}
             pendingHeats={pendingHeats}
             sectionKey={cfg.key}
           />
@@ -563,7 +605,7 @@ export function DeptCompletedPage({ dept }: { dept: 'micro' | 'tensile' | 'hardn
             <TableBody>
               {done.map((h) => (
                 <TableRow key={h.id}>
-                  <TableCell className="font-mono">{h.heatCode}</TableCell>
+                  <TableCell className="font-mono font-medium">{h.heatCode}</TableCell>
                   <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
                   <TableCell>
                     <DeptBadge value="COMPLETED" />
@@ -573,7 +615,7 @@ export function DeptCompletedPage({ dept }: { dept: 'micro' | 'tensile' | 'hardn
               {done.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
-                    Nothing completed yet.
+                    No completed heats yet for this department.
                   </TableCell>
                 </TableRow>
               ) : null}
