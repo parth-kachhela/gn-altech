@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Package, Plus, Search, Upload, Download, MoreHorizontal, Copy, Eye, Pencil, Power, Trash2, Sparkles, Loader2 } from 'lucide-react'
+import { Package, Plus, Search, Upload, Download, MoreHorizontal, Copy, Eye, Pencil, Power, Trash2, Sparkles, Loader2, RotateCcw } from 'lucide-react'
 import { useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,8 +40,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProductMastersHydrated } from '@/hooks/useHydrated'
 import { exportMasterExcel } from '@/services/masterExport'
 import { createEmptyMaster } from '@/lib/masterFactory'
-import { nowIso } from '@/lib/id'
-import { seedDemoMaster } from '@/services/masterSeed'
+import { cleanAndReseedMaster } from '@/services/masterSeed'
 
 export function ProductMastersPage() {
   const hydrated = useProductMastersHydrated()
@@ -60,16 +59,16 @@ export function ProductMastersPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [seeding, setSeeding] = useState(false)
 
-  const handleLoadDemo = async () => {
+  const handleCleanAndReseed = async () => {
     setSeeding(true)
     try {
-      const outcome = await seedDemoMaster(user?.name ?? 'unknown')
+      const outcome = await cleanAndReseedMaster(user?.name ?? 'unknown')
       toast.success(
-        `Demo data loaded: ${outcome.added} added, ${outcome.updated} updated, ${outcome.heatsAdded} heat code(s) added, ${outcome.heatsUpdated} refreshed`,
+        `Database cleaned and reseeded: ${outcome.mastersCount} SAP Product Master(s) loaded from Master.xlsx, ${outcome.heatsCount} fresh heats initialized.`,
       )
     } catch (err) {
       console.error(err)
-      toast.error('Failed to load demo data. Please import the workbook manually.')
+      toast.error('Failed to reseed master data. Please check workbook.')
     } finally {
       setSeeding(false)
     }
@@ -106,12 +105,12 @@ export function ProductMastersPage() {
     <div>
       <PageHeader
         title="Product Master"
-        description="SAP-driven product specifications. Import from the master workbook or maintain manually."
+        description="SAP-driven product specifications. Import from Master.xlsx or maintain manually."
         actions={
           <>
-            <Button variant="outline" onClick={handleLoadDemo} disabled={seeding}>
-              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-amber-500" />}
-              Load Demo Data
+            <Button variant="outline" onClick={handleCleanAndReseed} disabled={seeding} className="border-amber-500/50 hover:bg-amber-500/10">
+              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4 text-amber-500" />}
+              Clean &amp; Reseed Master.xlsx
             </Button>
             <Button variant="outline" onClick={() => exportMasterExcel(masters)}>
               <Download className="h-4 w-4" />
@@ -140,133 +139,144 @@ export function ProductMastersPage() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="relative max-w-sm flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search SAP No., Part No., Item or Customer…"
-            className="pl-9"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by SAP No, Part No, Description, Material, Customer..."
+            className="pl-9"
           />
         </div>
-        <div className="text-sm text-muted-foreground">
-          {masters.length} masters · {activeCount} active
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Badge variant="outline" className="font-normal">
+            {masters.length} total
+          </Badge>
+          <Badge variant="secondary" className="font-normal">
+            {activeCount} active
+          </Badge>
         </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          icon={<Package className="h-8 w-8" />}
-          title={query ? 'No matching masters' : 'No product masters yet'}
-          description={
-            query
-              ? 'Try a different search term.'
-              : 'Import the master workbook to load SAP-based product specifications and heat codes, or load the bundled demo data.'
-          }
-          action={
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <Button variant="outline" onClick={handleLoadDemo} disabled={seeding}>
-                {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-amber-500" />}
-                Load Demo Data
-              </Button>
-              <Button asChild>
-                <Link to="/product-masters/import">
-                  <Upload className="h-4 w-4" />
-                  Import Excel
-                </Link>
-              </Button>
-            </div>
-          }
-        />
-      ) : (
-        <div className="rounded-md border">
+      <div className="mt-4 rounded-lg border bg-card">
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon={<Package className="h-8 w-8" />}
+            title="No product masters found"
+            description={query ? 'Try adjusting your search query.' : 'Click "Clean & Reseed Master.xlsx" or import an Excel file to get started.'}
+            action={
+              query ? undefined : (
+                <Button onClick={handleCleanAndReseed} disabled={seeding}>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Clean &amp; Reseed Master.xlsx
+                </Button>
+              )
+            }
+          />
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>SAP No.</TableHead>
-                <TableHead>Part No.</TableHead>
+                <TableHead>SAP No</TableHead>
+                <TableHead>Part No</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Material</TableHead>
                 <TableHead>Customer</TableHead>
-                <TableHead>Rev</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Heat Codes</TableHead>
-                <TableHead className="w-16">Actions</TableHead>
+                <TableHead className="text-center">Sections</TableHead>
+                <TableHead className="text-center">Heats</TableHead>
+                <TableHead className="text-center">Rev</TableHead>
+                <TableHead className="text-center">Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell className="font-mono text-xs font-medium">
-                    <Link to={`/product-masters/${m.id}`} className="hover:underline">
+                  <TableCell className="font-mono font-medium">
+                    <Link
+                      to={`/product-masters/${m.id}`}
+                      className="hover:underline text-primary"
+                    >
                       {m.sapNo}
                     </Link>
                   </TableCell>
-                  <TableCell>{m.partNo || '—'}</TableCell>
-                  <TableCell className="max-w-[220px] truncate">{m.description || '—'}</TableCell>
-                  <TableCell>{m.material || '—'}</TableCell>
-                  <TableCell>{m.customer || '—'}</TableCell>
-                  <TableCell>v{m.revision ?? 1}</TableCell>
-                  <TableCell>
-                    <Badge variant={m.status === 'ACTIVE' ? 'default' : 'secondary'}>
-                      {m.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                  <TableCell className="font-mono text-sm">{m.partNo || '—'}</TableCell>
+                  <TableCell className="max-w-[200px] truncate" title={m.description}>
+                    {m.description}
+                  </TableCell>
+                  <TableCell>{m.material}</TableCell>
+                  <TableCell className="max-w-[150px] truncate" title={m.customer}>
+                    {m.customer}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Badge variant="outline" className="text-xs">
+                      {m.sections.length}
                     </Badge>
                   </TableCell>
-                  <TableCell>{heatCountBySap[m.sapNo.toLowerCase()] ?? 0}</TableCell>
-                  <TableCell>
+                  <TableCell className="text-center">
+                    <Badge variant="secondary" className="text-xs">
+                      {heatCountBySap[m.sapNo.toLowerCase()] ?? 0}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-center font-mono text-xs">
+                    v{m.revision ?? 1}
+                  </TableCell>
+                  <TableCell className="text-center">
+                    <Badge
+                      variant={m.status === 'ACTIVE' ? 'default' : 'secondary'}
+                      className="text-xs"
+                    >
+                      {m.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" title="Actions">
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem asChild className="gap-2">
+                        <DropdownMenuItem asChild>
                           <Link to={`/product-masters/${m.id}`}>
-                            <Eye className="h-4 w-4" />
-                            View
+                            <Eye className="mr-2 h-4 w-4" /> View Details
                           </Link>
                         </DropdownMenuItem>
-                        <DropdownMenuItem asChild className="gap-2">
+                        <DropdownMenuItem asChild>
                           <Link to={`/product-masters/${m.id}/edit`}>
-                            <Pencil className="h-4 w-4" />
-                            Edit
+                            <Pencil className="mr-2 h-4 w-4" /> Edit
                           </Link>
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
-                            const id = duplicateMaster(m.id)
-                            if (id) {
-                              addLog({ userId: user?.name ?? 'unknown', action: 'master_duplicated', entityType: 'PRODUCT_MASTER', after: { sapNo: m.sapNo } })
-                              toast.success('Master duplicated as new revision')
-                              navigate(`/product-masters/${id}/edit`)
+                            const newId = duplicateMaster(m.id)
+                            if (newId) {
+                              addLog({ userId: user?.name ?? 'unknown', action: 'master_duplicated', entityType: 'PRODUCT_MASTER', after: { sourceSap: m.sapNo, targetId: newId } })
+                              toast.success(`Created draft revision of ${m.sapNo}`)
+                              navigate(`/product-masters/${newId}/edit`)
                             }
                           }}
-                          className="gap-2"
                         >
-                          <Copy className="h-4 w-4" />
-                          Duplicate
+                          <Copy className="mr-2 h-4 w-4" /> Duplicate (New Rev)
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
-                            const next = m.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
-                            setMasterStatus(m.id, next)
-                            addLog({ userId: user?.name ?? 'unknown', action: `master_${next === 'ACTIVE' ? 'activated' : 'deactivated'}`, entityType: 'PRODUCT_MASTER', after: { sapNo: m.sapNo, status: next, at: nowIso() } })
-                            toast.success(next === 'ACTIVE' ? 'Master activated' : 'Master deactivated')
+                            const nextStatus = m.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
+                            setMasterStatus(m.id, nextStatus)
+                            addLog({ userId: user?.name ?? 'unknown', action: 'master_status_changed', entityType: 'PRODUCT_MASTER', after: { sapNo: m.sapNo, status: nextStatus } })
+                            toast.success(`${m.sapNo} marked as ${nextStatus}`)
                           }}
-                          className="gap-2"
                         >
-                          <Power className="h-4 w-4" />
+                          <Power className="mr-2 h-4 w-4" />
                           {m.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
+                          className="text-destructive"
                           onClick={() => setDeleteTarget({ id: m.id, name: m.sapNo })}
-                          className="gap-2 text-destructive"
                         >
-                          <Trash2 className="h-4 w-4" />
-                          Delete
+                          <Trash2 className="mr-2 h-4 w-4" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -275,17 +285,20 @@ export function ProductMastersPage() {
               ))}
             </TableBody>
           </Table>
-        </div>
-      )}
+        )}
+      </div>
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete master?</AlertDialogTitle>
+            <AlertDialogTitle>Delete Product Master?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete <span className="font-semibold">{deleteTarget?.name}</span>.
-              Certificates that reference it keep their product snapshot, but the master will no longer
-              be selectable. This action cannot be undone.
+              Are you sure you want to delete master <strong>{deleteTarget?.name}</strong>? This
+              action cannot be undone. Any heat records referencing this master will retain their
+              snapshots.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -295,10 +308,10 @@ export function ProductMastersPage() {
               onClick={() => {
                 if (deleteTarget) {
                   deleteMaster(deleteTarget.id)
-                  addLog({ userId: user?.name ?? 'unknown', action: 'master_deleted', entityType: 'PRODUCT_MASTER', after: { id: deleteTarget.id } })
-                  toast.success('Master deleted')
+                  addLog({ userId: user?.name ?? 'unknown', action: 'master_deleted', entityType: 'PRODUCT_MASTER', after: { sapNo: deleteTarget.name } })
+                  toast.success(`Deleted master ${deleteTarget.name}`)
+                  setDeleteTarget(null)
                 }
-                setDeleteTarget(null)
               }}
             >
               Delete

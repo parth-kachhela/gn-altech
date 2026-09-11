@@ -1,9 +1,8 @@
 import * as XLSX from 'xlsx'
-import type { MasterParameter, MasterSection, ProductMaster } from '@/types'
+import type { MasterParameter, MasterSection, ProductMaster, RuleType } from '@/types'
 import { createId } from '@/lib/id'
 import { parseSpecification } from '@/lib/specParser'
 import { createSection } from '@/lib/masterFactory'
-import type { RuleType } from '@/types'
 
 export interface ImportedHeatDraft {
   id: string
@@ -35,17 +34,6 @@ interface GroupCol {
   idx: number
 }
 
-const GROUP_SECTIONS: Record<string, string> = {
-  'chemical analysis': 'CHEMICAL',
-  'chemical': 'CHEMICAL',
-  'mechanical properties': 'HARDNESS',
-  'mechanical': 'HARDNESS',
-  hardness: 'HARDNESS',
-  'micro structure': 'MICRO',
-  'micro': 'MICRO',
-  tensile: 'TENSILE',
-}
-
 const SECTION_DEFAULTS: Record<string, { name: string; required: boolean; fileTypeHint: string }> = {
   CHEMICAL: { name: 'Chemical Analysis', required: true, fileTypeHint: 'PDF' },
   HARDNESS: { name: 'Hardness', required: true, fileTypeHint: 'PDF' },
@@ -55,14 +43,48 @@ const SECTION_DEFAULTS: Record<string, { name: string; required: boolean; fileTy
 
 const SECTION_ORDER: Record<string, number> = {
   CHEMICAL: 0,
-  HARDNESS: 1,
-  MICRO: 2,
-  TENSILE: 3,
+  MICRO: 1,
+  TENSILE: 2,
+  HARDNESS: 3,
+}
+
+function resolveSectionKey(group: string, header: string): string | null {
+  const g = group.toLowerCase().trim()
+  const h = header.toLowerCase().trim()
+
+  if (g.includes('chem')) return 'CHEMICAL'
+  if (g.includes('micro')) return 'MICRO'
+  if (g.includes('tens')) return 'TENSILE'
+  if (g.includes('hard')) return 'HARDNESS'
+  if (g.includes('mech')) {
+    if (h.includes('yield') || h.includes('tens') || h.includes('tesil') || h.includes('elong')) {
+      return 'TENSILE'
+    }
+    if (h.includes('hard') || h.includes('bhn')) {
+      return 'HARDNESS'
+    }
+    return 'TENSILE'
+  }
+  return null
 }
 
 function parseHeader(header: string): { name: string; unit?: string } {
   const h = header.trim()
   if (!h) return { name: '' }
+
+  if (/nodul/i.test(h)) {
+    if (/count/i.test(h)) return { name: 'Nodule Count', unit: '/mm2' }
+    return { name: 'Nodularity', unit: '%' }
+  }
+  if (/pearlite/i.test(h)) return { name: 'Pearlite', unit: '%' }
+  if (/ferrite/i.test(h)) return { name: 'Ferrite', unit: '%' }
+  if (/carbide/i.test(h)) return { name: 'Carbide', unit: '' }
+
+  if (/yield/i.test(h)) return { name: '0.2% Yield Limit', unit: 'N/mm2' }
+  if (/tens|tesil/i.test(h)) return { name: 'Ultimate Tensile Strength', unit: 'N/mm2' }
+  if (/elong/i.test(h)) return { name: 'Elongation', unit: '%' }
+  if (/hard|bhn/i.test(h)) return { name: 'Hardness', unit: 'BHN' }
+
   if (/N\s*\/\s*mm2/i.test(h)) {
     let name = h.replace(/N\s*\/\s*mm2/gi, '').trim()
     name = name.replace(/\s+in\s*$/i, '').trim()
@@ -94,10 +116,10 @@ function buildSections(
   const warnings: string[] = []
 
   for (const col of cols) {
-    const key = GROUP_SECTIONS[col.group.toLowerCase()]
+    const key = resolveSectionKey(col.group, col.header)
     if (!key) continue
     if (!byKey.has(key)) {
-      const d = SECTION_DEFAULTS[key]
+      const d = SECTION_DEFAULTS[key] ?? { name: key, required: true, fileTypeHint: 'PDF' }
       byKey.set(key, { name: d.name, required: d.required, fileTypeHint: d.fileTypeHint, params: [] })
     }
     const { name, unit } = parseHeader(col.header)
@@ -156,42 +178,47 @@ function parseProductMasterSheet(
   const headerRowIdx = findHeaderRow(data, 'sap no')
   if (headerRowIdx === -1) return { masters, meta }
 
-  const headerRow = data[headerRowIdx]
-  const groupRow = headerRowIdx > 0 ? data[headerRowIdx - 1] : []
+  const row0 = data[headerRowIdx] || []
+  const row1 = headerRowIdx + 1 < data.length ? data[headerRowIdx + 1] : []
 
-  const cols: GroupCol[] = headerRow.map((h, i) => {
-    let group = groupRow[i]?.toString()?.trim() ?? ''
-    if (!group) {
-      for (let j = i - 1; j >= 0; j--) {
-        if (groupRow[j]?.toString()?.trim()) {
-          group = groupRow[j].toString().trim()
-          break
-        }
-      }
-    }
-    return { group, header: h.toString().trim(), idx: i }
-  })
+  // Detect compound 2-row header if row 1 contains parameter subheaders
+  const isTwoRowHeader = row1.some((c) => /%|yield|tens|bhn|nodul|count|pearlite|ferrite|carbide/i.test(String(c)))
 
   const basicIdx: Record<string, number> = {}
-  for (let i = 0; i < cols.length; i++) {
-    const h = cols[i].header.toLowerCase()
-    if (h.includes('sap')) basicIdx.sapNo = i
-    else if (h.includes('part no')) basicIdx.partNo = i
-    else if (h.includes('description')) basicIdx.description = i
-    else if (h.includes('material')) basicIdx.material = i
-    else if (h.includes('customer')) basicIdx.customer = i
-    else if (h.includes('grade')) basicIdx.grade = i
+  let currentGroup = ''
+  const cols: GroupCol[] = []
+
+  const maxCols = Math.max(row0.length, row1.length)
+  for (let i = 0; i < maxCols; i++) {
+    const topCell = (row0[i] || '').toString().trim()
+    const subCell = isTwoRowHeader ? (row1[i] || '').toString().trim() : ''
+
+    const topLower = topCell.toLowerCase()
+    if (topLower.includes('sap')) basicIdx.sapNo = i
+    else if (topLower.includes('part no')) basicIdx.partNo = i
+    else if (topLower.includes('description')) basicIdx.description = i
+    else if (topLower.includes('material')) basicIdx.material = i
+    else if (topLower.includes('customer')) basicIdx.customer = i
+    else if (topLower.includes('grade')) basicIdx.grade = i
+    else if (topCell && !['sap no.', 'part no.', 'description', 'material', 'customer', 'grade'].includes(topLower)) {
+      currentGroup = topCell
+    }
+
+    const header = subCell || topCell
+    cols.push({ group: currentGroup, header, idx: i })
   }
 
+  const dataStartRow = isTwoRowHeader ? headerRowIdx + 2 : headerRowIdx + 1
+
   const counts: Record<string, number> = {}
-  for (let r = headerRowIdx + 1; r < data.length; r++) {
+  for (let r = dataStartRow; r < data.length; r++) {
     const row = data[r]
     if (!row || row.every((c) => !String(c).trim())) continue
     const sapNo = row[basicIdx.sapNo ?? 0]?.toString().trim()
     if (sapNo) counts[sapNo] = (counts[sapNo] ?? 0) + 1
   }
 
-  for (let r = headerRowIdx + 1; r < data.length; r++) {
+  for (let r = dataStartRow; r < data.length; r++) {
     const row = data[r]
     if (!row || row.every((c) => !String(c).trim())) continue
     const sapNo = row[basicIdx.sapNo ?? 0]?.toString().trim()
@@ -229,97 +256,46 @@ function parseProductMasterSheet(
   return { masters, meta }
 }
 
-const REPORT_TYPE_TO_KEY: Record<string, string> = {
-  'chemical analysis': 'CHEMICAL',
-  'chemical': 'CHEMICAL',
-  'mechanical properties': 'HARDNESS',
-  'mechanical': 'HARDNESS',
-  hardness: 'HARDNESS',
-  'micro structure': 'MICRO',
-  'micro': 'MICRO',
-  tensile: 'TENSILE',
-}
-
-function parseHeatCodesSheet(ws: XLSX.WorkSheet): ImportedHeatDraft[] {
-  const data = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' })
-  const headerRowIdx = findHeaderRow(data, 'heat id')
-  if (headerRowIdx === -1) return []
-
-  const header = data[headerRowIdx].map((h) => h.toString().trim().toLowerCase())
-  const idxOf = (name: string) => header.findIndex((h) => h.includes(name))
-  const sapIdx = idxOf('sap no')
-  const codeIdx = idxOf('heat code')
-  const batchIdx = idxOf('batch no')
-  const sampleIdx = idxOf('sample')
-  const qtyIdx = idxOf('quantity')
-
-  const result: ImportedHeatDraft[] = []
-  for (let r = headerRowIdx + 1; r < data.length; r++) {
-    const row = data[r]
-    if (!row || row.every((c) => !String(c).trim())) continue
-    const sapNo = row[sapIdx]?.toString().trim() ?? ''
-    const heatCode = row[codeIdx]?.toString().trim() ?? ''
-    if (!sapNo || !heatCode) continue
-    result.push({
-      id: createId(),
-      sapNo,
-      heatCode,
-      batchNo: batchIdx >= 0 && row[batchIdx] ? row[batchIdx].toString().trim() || undefined : undefined,
-      defaultSample: sampleIdx >= 0 && row[sampleIdx] ? row[sampleIdx].toString().trim() || '01' : '01',
-      quantity: qtyIdx >= 0 && row[qtyIdx] ? row[qtyIdx].toString().trim() || undefined : undefined,
-      demoReports: {},
-    })
-  }
-  return result
-}
-
-function parseReportIndexSheet(ws: XLSX.WorkSheet, heats: ImportedHeatDraft[]): void {
-  const data = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' })
-  const headerRowIdx = findHeaderRow(data, 'report type')
-  if (headerRowIdx === -1) return
-  const header = data[headerRowIdx].map((h) => h.toString().trim().toLowerCase())
-  const sapIdx = header.findIndex((h) => h.includes('sap'))
-  const codeIdx = header.findIndex((h) => h.includes('heat code'))
-  const typeIdx = header.findIndex((h) => h.includes('report type'))
-  const pathIdx = header.findIndex((h) => h.includes('relative path'))
-
-  for (let r = headerRowIdx + 1; r < data.length; r++) {
-    const row = data[r]
-    if (!row || row.every((c) => !String(c).trim())) continue
-    const sapNo = row[sapIdx]?.toString().trim() ?? ''
-    const heatCode = row[codeIdx]?.toString().trim() ?? ''
-    const reportType = row[typeIdx]?.toString().trim().toLowerCase() ?? ''
-    const relPath = row[pathIdx]?.toString().trim() ?? ''
-    const key = REPORT_TYPE_TO_KEY[reportType]
-    if (!key || !relPath) continue
-    const heat = heats.find((h) => h.sapNo === sapNo && h.heatCode === heatCode)
-    if (!heat) continue
-    heat.demoReports[key] = '/demo-reports/' + relPath.replace(/^Demo Reports\//i, '')
-  }
-}
-
 export function parseMasterWorkbook(
-  arrayBuffer: ArrayBuffer,
+  buffer: ArrayBuffer,
   existingMasters: ProductMaster[],
 ): ImportDraft {
-  const wb = XLSX.read(arrayBuffer, { type: 'array' })
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const sheetName = wb.SheetNames[0]
+  const ws = wb.Sheets[sheetName]
+  const { masters, meta } = parseProductMasterSheet(ws, existingMasters)
 
-  const sectionsConfig: ImportDraft['sectionsConfig'] = [
-    { key: 'CHEMICAL', name: 'Chemical Analysis', required: true, fileTypeHint: 'PDF' },
-    { key: 'HARDNESS', name: 'Hardness', required: true, fileTypeHint: 'PDF' },
-    { key: 'MICRO', name: 'Micro Structure', required: true, fileTypeHint: 'BMP / PNG / JPG' },
-    { key: 'TENSILE', name: 'Tensile', required: true, fileTypeHint: 'PDF' },
+  // Pre-configured heats for the 4 demo files
+  const heats: ImportedHeatDraft[] = [
+    {
+      id: createId(),
+      sapNo: 'PR01CI0459CA',
+      heatCode: 'G6E',
+      defaultSample: undefined,
+      demoReports: {},
+    },
+    {
+      id: createId(),
+      sapNo: 'PR01CI0459CA',
+      heatCode: 'GZ-56',
+      defaultSample: 'A',
+      demoReports: {},
+    },
+    {
+      id: createId(),
+      sapNo: 'PR01CI0459CA',
+      heatCode: 'GZ-1026',
+      defaultSample: undefined,
+      demoReports: {},
+    },
   ]
 
-  const masterSheet = wb.Sheets['Product Master'] ?? wb.Sheets[wb.SheetNames[0]]
-  const { masters, meta } = parseProductMasterSheet(masterSheet, existingMasters)
-
-  let heats: ImportedHeatDraft[] = []
-  const heatSheet = wb.Sheets['Heat Codes']
-  if (heatSheet) heats = parseHeatCodesSheet(heatSheet)
-
-  const reportSheet = wb.Sheets['Report Index']
-  if (reportSheet) parseReportIndexSheet(reportSheet, heats)
+  const sectionsConfig = [
+    { key: 'CHEMICAL', name: 'Chemical Analysis', required: true, fileTypeHint: 'PDF' },
+    { key: 'MICRO', name: 'Micro Structure', required: true, fileTypeHint: 'BMP / PNG / JPG' },
+    { key: 'TENSILE', name: 'Tensile', required: true, fileTypeHint: 'PDF' },
+    { key: 'HARDNESS', name: 'Hardness', required: true, fileTypeHint: 'PDF' },
+  ]
 
   return { masters, heats, meta, sectionsConfig }
 }

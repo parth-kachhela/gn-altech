@@ -1,11 +1,12 @@
 import { parseMasterWorkbook } from '@/services/masterImport'
 import { useProductMasterStore } from '@/stores/productMasterStore'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
+import { useCertificateStore } from '@/stores/certificateStore'
 import { useAuditStore } from '@/stores/auditStore'
-import { buildDemoHeatReports } from '@/lib/demoReportFactory'
+import { useUsersStore } from '@/stores/usersStore'
 import { departmentForSectionKey } from '@/lib/permissions'
-import { createId, nowIso, toDmY } from '@/lib/id'
-import type { HeatRecord, HeatReportData, HeatReportRequest, HeatSample } from '@/types'
+import { createId, nowIso } from '@/lib/id'
+import type { HeatReportRequest } from '@/types'
 
 const DEMO_WORKBOOK_URL = `${import.meta.env.BASE_URL}demo-data/GN_Altech_Demo_Master.xlsx`
 
@@ -17,162 +18,102 @@ export interface SeedOutcome {
   heatsUpdated: number
 }
 
-const DEMO_SAMPLE_COUNTS: Record<string, number> = {
-  A6A: 2,
-  A6B: 4,
-  A6C: 1,
-  A6D: 1,
-  B6A: 2,
-  B6B: 1,
-  B6C: 4,
-  B6D: 2,
-  C6A: 4,
-  C6B: 2,
-  C6C: 1,
-  C6D: 1,
-  G6E: 1,
-  G6F: 2,
-  G6G: 4,
-  G6H: 1,
-}
-
-function demoHeatDate(index: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - (index % 50) - 1)
-  return toDmY(d)
-}
-
-function demoSamplesFor(
-  defaultSample: string | undefined,
-  count: number,
-): HeatSample[] {
-  if (count <= 0) return []
-  const base = defaultSample?.trim().toUpperCase().charCodeAt(0) ?? 0
-  const start = base >= 65 && base <= 90 ? base : 65
-  return Array.from({ length: count }, (_, i) => ({
-    id: createId(),
-    label: String.fromCharCode(start + i),
-    quantity: undefined,
-  }))
-}
-
 export async function fetchDemoWorkbook(): Promise<ArrayBuffer> {
   const res = await fetch(DEMO_WORKBOOK_URL)
   if (!res.ok) throw new Error(`Failed to load demo workbook (${res.status})`)
   return res.arrayBuffer()
 }
 
-export async function seedDemoMaster(userName: string): Promise<SeedOutcome> {
-  const masters = useProductMasterStore.getState().masters
+/**
+ * Completely clears database state (masters, heats, certificates) and reseeds
+ * fresh product masters from Master.xlsx and initial clean heats.
+ */
+export async function cleanAndReseedMaster(userName = 'Admin'): Promise<{ mastersCount: number; heatsCount: number }> {
+  // 1. Clear existing records
+  useUsersStore.getState().seedDefaultAccounts()
+  useHeatRecordStore.setState({ heatRecords: [] })
+  useCertificateStore.setState({ certificates: [] })
+  useProductMasterStore.setState({ masters: [] })
+
+  // 2. Fetch and parse fresh Master.xlsx
   const buffer = await fetchDemoWorkbook()
-  const result = parseMasterWorkbook(buffer, masters)
+  const result = parseMasterWorkbook(buffer, [])
 
-  let added = 0
-  let updated = 0
-  let revisions = 0
-
+  // 3. Save all product masters
   for (const master of result.masters) {
-    const meta = result.meta[master.sapNo]
-    if (meta?.existing) {
-      const existing = meta.existing
-      if (existing.status === 'ACTIVE') {
-        useProductMasterStore.getState().saveMaster({
-          ...master,
-          id: existing.id,
-          revision: (existing.revision ?? 1) + 1,
-          status: 'ACTIVE',
-          createdAt: existing.createdAt,
-          updatedAt: nowIso(),
-        })
-        updated++
-      } else {
-        useProductMasterStore.getState().saveMaster({
-          ...master,
-          id: createId(),
-          revision: (existing.revision ?? 1) + 1,
-          status: 'INACTIVE',
-          createdAt: nowIso(),
-          updatedAt: nowIso(),
-        })
-        revisions++
-      }
-    } else {
-      useProductMasterStore.getState().saveMaster({
-        ...master,
-        revision: 1,
-        status: 'ACTIVE',
-      })
-      added++
-    }
+    useProductMasterStore.getState().saveMaster({
+      ...master,
+      revision: 1,
+      status: 'ACTIVE',
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    })
   }
 
-  const heatRecords = useHeatRecordStore.getState().heatRecords
-  let heatsAdded = 0
-  let heatsUpdated = 0
-  result.heats.forEach((heat, index) => {
-    const master = useProductMasterStore.getState().getActiveMasterBySap(heat.sapNo)
-    const samples = demoSamplesFor(heat.defaultSample, DEMO_SAMPLE_COUNTS[heat.heatCode] ?? 1)
-    const targets: Array<{ id: string | undefined; label: string | undefined }> = [
-      { id: undefined, label: undefined },
-      ...samples,
-    ]
-    const requests: HeatReportRequest[] = master
-      ? master.sections
-          .filter((s) => s.required)
-          .flatMap((section) =>
-            targets.map((sample) => ({
-              id: createId(),
-              sectionKey: section.key,
-              sectionName: section.name,
-              department: departmentForSectionKey(section.key),
-              sampleId: sample.id,
-              sampleLabel: sample.label,
-              status: 'REVIEWED' as const,
-            })),
-          )
-      : []
-    const reports: HeatReportData[] = master
-      ? targets.flatMap((sample) => buildDemoHeatReports(master, sample.id, sample.label))
-      : []
-    const patch: Partial<HeatRecord> = {
-      heatCode: heat.heatCode,
-      batchNo: heat.batchNo,
-      quantity: heat.quantity,
-      heats: samples,
-      demoReports: heat.demoReports,
-      requests,
-      reports,
-      date: demoHeatDate(index),
-    }
+  // 4. Create fresh pending heats for the 4 lab reports
+  const pendingHeats = [
+    { sap: 'PR01CI0459CA', heat: 'G6E' },
+    { sap: 'PR01CI0459CA', heat: 'GZ-56' },
+    { sap: 'PR01CI0459CA', heat: 'GZ-1026' },
+  ]
 
-    const existing = heatRecords.find(
-      (h) =>
-        h.sapNo.toLowerCase() === heat.sapNo.toLowerCase() &&
-        h.heatCode.toLowerCase() === heat.heatCode.toLowerCase(),
-    )
-    if (existing) {
-      useHeatRecordStore.getState().updateHeatRecord(existing.id, patch)
-      heatsUpdated++
-    } else {
-      const id = useHeatRecordStore.getState().addHeatRecord({
-        sapNo: heat.sapNo,
-        heatCode: heat.heatCode,
-        batchNo: heat.batchNo,
-        quantity: heat.quantity,
-        heats: samples,
-        demoReports: heat.demoReports,
-      })
-      useHeatRecordStore.getState().updateHeatRecord(id, patch)
-      heatsAdded++
-    }
-  })
+  const FOUR_SECTIONS = ['CHEMICAL', 'MICRO', 'TENSILE', 'HARDNESS'] as const
+  const SECTION_NAMES: Record<string, string> = {
+    CHEMICAL: 'Chemical Analysis',
+    MICRO: 'Micro Structure',
+    TENSILE: 'Tensile',
+    HARDNESS: 'Hardness',
+  }
+
+  for (const ph of pendingHeats) {
+    const id = useHeatRecordStore.getState().addHeatRecord({
+      sapNo: ph.sap,
+      heatCode: ph.heat,
+      heats: [],
+      demoReports: {},
+    })
+
+    const requests: HeatReportRequest[] = FOUR_SECTIONS.map((secKey) => ({
+      id: createId(),
+      sectionKey: secKey,
+      sectionName: SECTION_NAMES[secKey],
+      department: departmentForSectionKey(secKey),
+      status: 'PENDING',
+    }))
+
+    useHeatRecordStore.setState((prev) => ({
+      heatRecords: prev.heatRecords.map((h) =>
+        h.id === id
+          ? {
+              ...h,
+              requests,
+              reports: [],
+            }
+          : h,
+      ),
+    }))
+  }
 
   useAuditStore.getState().addLog({
     userId: userName,
-    action: 'master_seeded_demo',
+    action: 'database_cleaned_and_reseeded',
     entityType: 'PRODUCT_MASTER',
-    after: { added, updated, revisions, heatsAdded, heatsUpdated },
+    after: { masters: result.masters.length, heats: pendingHeats.length },
   })
 
-  return { added, updated, revisions, heatsAdded, heatsUpdated }
+  return {
+    mastersCount: result.masters.length,
+    heatsCount: pendingHeats.length,
+  }
+}
+
+export async function seedDemoMaster(userName: string): Promise<SeedOutcome> {
+  const outcome = await cleanAndReseedMaster(userName)
+  return {
+    added: outcome.mastersCount,
+    updated: 0,
+    revisions: 0,
+    heatsAdded: outcome.heatsCount,
+    heatsUpdated: 0,
+  }
 }
