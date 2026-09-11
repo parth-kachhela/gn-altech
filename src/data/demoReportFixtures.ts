@@ -5,10 +5,9 @@ import type { ParsedValue } from '@/types'
  * (01.Chemical data / 02.Micro data / 03.Tensile data / 04.Hardness data).
  *
  * Single demo SAP (Master.xlsx row 1: PR01CI0459CA / 8682-904-00Z /
- * COVER CASTING / FG-260 / Parker Hanifin): every demo lab file maps to
- * this master so one SAP carries multiple heats.
+ * COVER CASTING / FG-260 / Parker Hanifin).
  *
- * 4 Files per Department mapping:
+ * The 4 canonical reports across all 4 departments:
  * 1. File 02 -> Heat: G6E (Heat-level)
  * 2. File 03 -> Heat: GZ-56 (Sample A)
  * 3. File 04 -> Heat: GZ-56 (Sample B)
@@ -25,7 +24,7 @@ export interface DemoFixture {
 
 const pct = (name: string, value: string): ParsedValue => ({ name, value, unit: '%', confidence: 0.95 })
 
-const CHEM_G6E: ParsedValue[] = [
+export const CHEM_G6E: ParsedValue[] = [
   pct('Fe', '93.2'), pct('C', '3.48'), pct('Si', '2.46'), pct('Mn', '0.317'),
   pct('P', '0.0159'), pct('S', '0.0094'), pct('Cr', '0.0231'), pct('Mo', '<0.0020'),
   pct('Ni', '0.0143'), pct('Al', '0.0129'), pct('Co', '<0.0010'), pct('Cu', '0.339'),
@@ -35,7 +34,7 @@ const CHEM_G6E: ParsedValue[] = [
   pct('B', '0.0013'), pct('Bi', '<0.0020'), pct('Ce', '0.0078'),
 ]
 
-const CHEM_GZ56_A: ParsedValue[] = [
+export const CHEM_GZ56_A: ParsedValue[] = [
   pct('Fe', '93.3'), pct('C', '3.06'), pct('Si', '1.83'), pct('Mn', '0.790'),
   pct('P', '0.0491'), pct('S', '0.0887'), pct('Cr', '0.246'), pct('Mo', '0.0103'),
   pct('Ni', '0.0392'), pct('Al', '<0.0030'), pct('Co', '0.0027'), pct('Cu', '0.472'),
@@ -45,7 +44,7 @@ const CHEM_GZ56_A: ParsedValue[] = [
   pct('B', '0.0024'), pct('Bi', '<0.0020'), pct('Ce', '<0.0060'),
 ]
 
-const CHEM_GZ56_B: ParsedValue[] = [
+export const CHEM_GZ56_B: ParsedValue[] = [
   pct('Fe', '93.3'), pct('C', '3.10'), pct('Si', '1.82'), pct('Mn', '0.780'),
   pct('P', '0.0632'), pct('S', '0.0831'), pct('Cr', '0.224'), pct('Mo', '0.0164'),
   pct('Ni', '0.0501'), pct('Al', '0.0040'), pct('Co', '0.0037'), pct('Cu', '0.489'),
@@ -55,7 +54,7 @@ const CHEM_GZ56_B: ParsedValue[] = [
   pct('B', '0.0027'), pct('Bi', '<0.0020'), pct('Ce', '<0.0060'),
 ]
 
-const CHEM_GZ1026: ParsedValue[] = [
+export const CHEM_GZ1026: ParsedValue[] = [
   pct('Fe', '93.2'), pct('C', '3.07'), pct('Si', '1.78'), pct('Mn', '0.868'),
   pct('P', '0.0614'), pct('S', '0.0907'), pct('Cr', '0.281'), pct('Mo', '0.0095'),
   pct('Ni', '0.0398'), pct('Al', '0.0057'), pct('Co', '0.0030'), pct('Cu', '0.506'),
@@ -82,13 +81,27 @@ function hardnessVals(avg: string, readings: string[]): ParsedValue[] {
   ]
 }
 
-const MICRO_STANDARD_VALUES: ParsedValue[] = [
+export const MICRO_STANDARD_VALUES: ParsedValue[] = [
   { name: 'Nodularity', value: '85', unit: '%', confidence: 0.95 },
   { name: 'Nodule Count', value: '180', unit: '/mm2', confidence: 0.95 },
   { name: 'Pearlite', value: '40', unit: '%', confidence: 0.95 },
   { name: 'Ferrite', value: '60', unit: '%', confidence: 0.95 },
   { name: 'Carbide', value: 'NIL', unit: '', confidence: 0.95 },
 ]
+
+export const TENSILE_VALUES: Record<string, ParsedValue[]> = {
+  'G6E': tensileVals('371.534', '592.309', '12.38', '72920', '24.0'),
+  'GZ-56-A': tensileVals(null, '253.934', null, '12860', '10.0'),
+  'GZ-56-B': tensileVals(null, '326.8', null, '16840', '11.3'),
+  'GZ-1026': tensileVals(null, '314.993', null, '98760', '12.1'),
+}
+
+export const HARDNESS_VALUES: Record<string, ParsedValue[]> = {
+  'G6E': hardnessVals('175', ['171', '177', '175', '172', '185', '184', '172', '176', '171', '170', '172', '173']),
+  'GZ-56-A': hardnessVals('205', ['202', '201', '204', '211', '203', '209', '204', '202', '210']),
+  'GZ-56-B': hardnessVals('205', ['204', '206']),
+  'GZ-1026': hardnessVals('204', ['203', '203', '202', '204', '203', '201', '208', '208']),
+}
 
 /** Normalized filename -> fixture per section. */
 type FixtureMap = Record<string, { sap: string; heat: string }>
@@ -110,13 +123,6 @@ const TENSILE_FILES: FixtureMap = {
   'GZ-1026 H CASTING': { sap: DEMO_SAP, heat: 'GZ-1026' },
 }
 
-const TENSILE_VALUES: Record<string, ParsedValue[]> = {
-  'G6E': tensileVals('371.534', '592.309', '12.38', '72920', '24.0'),
-  'GZ-56-A': tensileVals(null, '253.934', null, '12860', '10.0'),
-  'GZ-56-B': tensileVals(null, '326.8', null, '16840', '11.3'),
-  'GZ-1026': tensileVals(null, '314.993', null, '98760', '12.1'),
-}
-
 const HARDNESS_FILES: FixtureMap = {
   '7005 ( G6E)': { sap: DEMO_SAP, heat: 'G6E' },
   '7005 (G6E)': { sap: DEMO_SAP, heat: 'G6E' },
@@ -131,13 +137,6 @@ const HARDNESS_FILES: FixtureMap = {
   'G6O TORQUE MOTOR': { sap: DEMO_SAP, heat: 'GZ-1026' },
   'GZ-1026 TORQUE MOTOR': { sap: DEMO_SAP, heat: 'GZ-1026' },
   'GZ-1026 H CASTING': { sap: DEMO_SAP, heat: 'GZ-1026' },
-}
-
-const HARDNESS_VALUES: Record<string, ParsedValue[]> = {
-  'G6E': hardnessVals('175', ['171', '177', '175', '172', '185', '184', '172', '176', '171', '170', '172', '173']),
-  'GZ-56-A': hardnessVals('205', ['202', '201', '204', '211', '203', '209', '204', '202', '210']),
-  'GZ-56-B': hardnessVals('205', ['204', '206']),
-  'GZ-1026': hardnessVals('204', ['203', '203', '202', '204', '203', '201', '208', '208']),
 }
 
 const MICRO_FILES: FixtureMap = {
@@ -159,18 +158,25 @@ export function normalizeDemoFileName(fileName: string): string {
 
 function lookupIn(map: FixtureMap, fileName: string): { sap: string; heat: string } | undefined {
   const norm = normalizeDemoFileName(fileName)
+  // 1. Direct match
   for (const [key, val] of Object.entries(map)) {
     if (key.toUpperCase() === norm) return val
   }
-  return undefined
-}
-
-function valuesForFile(table: Record<string, ParsedValue[]>, fileName: string, heat: string): ParsedValue[] {
-  const norm = normalizeDemoFileName(fileName)
-  for (const [key, vals] of Object.entries(table)) {
-    if (key.toUpperCase() === norm) return vals
+  // 2. Keyword/token fallback
+  const u = norm.toUpperCase()
+  if (u.includes('G6E') || u.includes('7005')) {
+    return { sap: DEMO_SAP, heat: 'G6E' }
   }
-  return table[heat] ?? []
+  if (u.includes('GZ-530') || u.includes('FLANGE') || u.includes('936')) {
+    return { sap: DEMO_SAP, heat: 'GZ-56' }
+  }
+  if (u.includes('GZ-56') || u.includes('COVER') || u.includes('934')) {
+    return { sap: DEMO_SAP, heat: 'GZ-56' }
+  }
+  if (u.includes('1026') || u.includes('G6O') || u.includes('TORQUE') || u.includes('TORQE') || u.includes('CASTING')) {
+    return { sap: DEMO_SAP, heat: 'GZ-1026' }
+  }
+  return undefined
 }
 
 const CHEMICAL_FILE_VALUES: Record<string, ParsedValue[]> = {
@@ -204,6 +210,21 @@ const HARDNESS_FILE_VALUES: Record<string, ParsedValue[]> = {
   'G6O TORQUE MOTOR': HARDNESS_VALUES['GZ-1026'],
   'GZ-1026 TORQUE MOTOR': HARDNESS_VALUES['GZ-1026'],
   'GZ-1026 H CASTING': HARDNESS_VALUES['GZ-1026'],
+}
+
+function valuesForFile(table: Record<string, ParsedValue[]>, fileName: string, heat: string): ParsedValue[] {
+  const norm = normalizeDemoFileName(fileName)
+  for (const [key, vals] of Object.entries(table)) {
+    if (key.toUpperCase() === norm) return vals
+  }
+  const u = norm.toUpperCase()
+  if (u.includes('G6E') || u.includes('7005')) return table['G6E'] ?? table['G6E RS12 7005'] ?? []
+  if (u.includes('GZ-530') || u.includes('FLANGE') || u.includes('936')) return table['GZ-56-B'] ?? table['GZ-530 P FLANGE'] ?? []
+  if (u.includes('GZ-56') || u.includes('COVER') || u.includes('934')) return table['GZ-56-A'] ?? table['GZ-56 P COVER'] ?? []
+  if (u.includes('1026') || u.includes('G6O') || u.includes('TORQUE') || u.includes('TORQE') || u.includes('CASTING')) {
+    return table['GZ-1026'] ?? table['GZ-1026 H CASTING'] ?? []
+  }
+  return table[heat] ?? []
 }
 
 /**

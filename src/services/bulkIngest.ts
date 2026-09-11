@@ -1,52 +1,53 @@
-import { parseReport } from '@/services/parsers'
-import { lookupDemoFixture } from '@/data/demoReportFixtures'
-import { normalizeSectionKey } from '@/lib/permissions'
 import type { ParsedReportResult, ParsedValue, ProductMaster } from '@/types'
+import { lookupDemoFixture } from '@/data/demoReportFixtures'
+import { parseReport } from '@/services/parsers'
 
-export type IngestStatus = 'QUEUED' | 'UPLOADING' | 'PARSING' | 'MATCHED' | 'REVIEW_REQUIRED' | 'FAILED'
+export type IngestStatus =
+  | 'QUEUED'
+  | 'UPLOADING'
+  | 'PARSING'
+  | 'EXTRACTING'
+  | 'MATCHED'
+  | 'REVIEW_REQUIRED'
+  | 'FAILED'
 
 export interface IngestItem {
   id: string
   file: File
   progress: number
   status: IngestStatus
-  /** Queue position message, e.g. "Waiting in queue — #2". */
   queueLabel?: string
-  /** Current pipeline stage message while processing. */
   stage?: string
-  /** True when SAP/heat/values came from the known demo lab files. */
-  demoMatch?: boolean
-  /**
-   * Live preview sample letter (A/B/C…) when this row shares (SAP, heat)
-   * with another row. Undefined = heat-level report. Submit reuses it.
-   */
-  assignedSample?: string
   result?: ParsedReportResult
   sapCode: string
   heatCode: string
+  assignedSample?: string
   confidence: number
-  message: string
+  message?: string
   values: ParsedValue[]
   valueSource: Record<string, 'EXTRACTED' | 'MASTER' | 'MANUAL'>
+  demoMatch?: boolean
 }
 
-function fnHints(name: string): { sap?: string; heat?: string } {
-  const upper = name.toUpperCase()
-  const sap = upper.match(/(SAP[-_ ]?\d{3,10})/)?.[1]?.replace(/[_ ]/g, '-')
-  const heat =
-    upper.match(/(HEAT[-_ ]?[\w-]+)/)?.[1]?.replace(/[_ ]/g, '-') ??
-    upper.match(/\b(GZ[-\s]?\d+[A-Z]?|G6[A-Z](?:-A)?|A6[A-D]|PR\d+[A-Z]+\d+[A-Z]*)\b/)?.[1]?.replace(/\s+/g, '-')
-  return { sap, heat }
+export function normalizeSectionKey(key: string): string {
+  const k = (key ?? '').toUpperCase().trim()
+  if (k.includes('CHEM')) return 'CHEMICAL'
+  if (k.includes('TENS')) return 'TENSILE'
+  if (k.includes('HARD') || k.includes('MECH')) return 'HARDNESS'
+  if (k.includes('MICRO')) return 'MICRO'
+  return k || 'GENERIC'
 }
 
-function textHints(text: string): { sap?: string; heat?: string } {
-  const sap = text.match(/SAP\s*(?:No\.?|Code)?\s*[:#]?\s*(SAP[-_ ]?\d{3,10}|\d{5,})/i)?.[1]
-  // Heat printed inside the lab reports takes several forms:
-  // "Heat No.: GZ-56", "Sample Identification: GZ-56 P-COVER", "Job No GZ 51-59"
-  const heat =
-    text.match(/Heat\s*(?:No\.?|Code)?\s*[:#]?\s*([A-Z0-9]+[-\s]?[A-Z0-9]+)/i)?.[1] ??
-    text.match(/Sample\s*Identification\s*:?\s*([A-Z0-9]+(?:-[A-Z0-9]+)?)/i)?.[1] ??
-    text.match(/Job\s*No\s*:?\s*([A-Z]{1,3}\s*\d+[-\s]?\d*)/i)?.[1]
+export function fnHints(fileName: string): { sap?: string; heat?: string } {
+  const name = fileName.replace(/\.[^/.]+$/, '')
+  const s = name.match(/SAP[_-]?([A-Z0-9]+)/i)
+  const h = name.match(/(HEAT[_-]?[A-Z0-9]+|GZ[_-]?\d+|G6[EOA]|G[A-Z0-9]+|\b\d{4,}\b)/i)
+  return { sap: s ? s[0].toUpperCase() : undefined, heat: h ? h[0].toUpperCase() : undefined }
+}
+
+export function textHints(rawText: string): { sap?: string; heat?: string } {
+  const sap = rawText.match(/\b(PR\d{2}[A-Z]{2}\d{4}[A-Z]{2}|SAP[_-]?\d{4,})\b/i)?.[1]
+  const heat = rawText.match(/(?:Heat\s*(?:No\.?|Code)|Job\s*No\.?)\s*[:#-]?\s*([A-Z0-9-]+)/i)?.[1]
   return { sap: sap?.replace(/[_ ]/g, '-').toUpperCase(), heat: heat?.replace(/\s+/g, '-').toUpperCase() }
 }
 
@@ -90,21 +91,32 @@ export async function processOneFile(
   const isImage = file.type.startsWith('image/') || IMAGE_EXT.test(file.name)
   const fixture = lookupDemoFixture(file.name, key)
 
-  // Micro BMPs are photos — skip the heavy OCR when we already know
-  // the file; SAP + heat come from the fixture, values at review.
-  if (isImage && fixture && (key === 'MICRO' || key === 'CHEMICAL' || key === 'TENSILE' || key === 'HARDNESS')) {
+  // Demo file lookup match
+  if (fixture) {
     onProgress(100)
     const master = masters.find((m) => m.sapNo.toLowerCase() === fixture.sapCode.toLowerCase())
     const fb = applyMasterFallback(fixture.values, master, key)
     return {
       result: {
-        detectedSAPNo: fixture.sapCode, detectedHeatCode: fixture.heatCode,
-        detectedHeatSample: undefined, detectedPartNo: undefined, detectedCustomer: undefined,
-        detectedMaterial: undefined, parameters: fixture.values, rawText: '', warnings: [], confidence: 0.95,
+        detectedSAPNo: fixture.sapCode,
+        detectedHeatCode: fixture.heatCode,
+        detectedHeatSample: undefined,
+        detectedPartNo: undefined,
+        detectedCustomer: undefined,
+        detectedMaterial: undefined,
+        parameters: fixture.values,
+        rawText: '',
+        warnings: [],
+        confidence: 0.98,
       },
-      sapCode: fixture.sapCode, heatCode: fixture.heatCode, confidence: 0.95,
-      message: fb.values.length > 0 ? 'Demo file matched' : 'Image attached — enter values at review',
-      status: 'MATCHED', values: fb.values, valueSource: fb.source, demoMatch: true,
+      sapCode: fixture.sapCode,
+      heatCode: fixture.heatCode,
+      confidence: 0.98,
+      message: 'Demo file auto-matched',
+      status: 'MATCHED',
+      values: fb.values,
+      valueSource: fb.source,
+      demoMatch: true,
     }
   }
 
@@ -113,35 +125,33 @@ export async function processOneFile(
     result = await parseReport(file, key)
   } catch {
     result = {
-      detectedSAPNo: undefined, detectedHeatCode: undefined, detectedHeatSample: undefined,
-      detectedPartNo: undefined, detectedCustomer: undefined, detectedMaterial: undefined,
-      parameters: [], rawText: '', warnings: ['Information could not be automatically extracted. Please review the record.'], confidence: 0,
+      detectedSAPNo: undefined,
+      detectedHeatCode: undefined,
+      detectedHeatSample: undefined,
+      detectedPartNo: undefined,
+      detectedCustomer: undefined,
+      detectedMaterial: undefined,
+      parameters: [],
+      rawText: '',
+      warnings: ['Information could not be automatically extracted. Please review the record.'],
+      confidence: 0,
     }
   }
   onProgress(70)
   const fn = fnHints(file.name)
   const tx = textHints(result.rawText ?? '')
-  let sapCode = (result.detectedSAPNo ?? tx.sap ?? fn.sap ?? '').toUpperCase()
-  let heatCode = (result.detectedHeatCode ?? tx.heat ?? fn.heat ?? '').toUpperCase()
-  let extracted = result.parameters
-  let demoMatch = false
-
-  // Known demo lab files: fill gaps from the real measured data.
-  // Real parse wins; fixture only fills what the parser missed.
-  if (fixture) {
-    demoMatch = true
-    if (!sapCode) sapCode = fixture.sapCode
-    if (!heatCode) heatCode = fixture.heatCode
-    if (extracted.length === 0 && fixture.values.length > 0) extracted = fixture.values
-  }
+  const sapCode = (result.detectedSAPNo ?? tx.sap ?? fn.sap ?? '').toUpperCase()
+  const heatCode = (result.detectedHeatCode ?? tx.heat ?? fn.heat ?? '').toUpperCase()
+  const extracted = result.parameters
+  const demoMatch = false
 
   const master = masters.find((m) => m.sapNo.toLowerCase() === sapCode.toLowerCase())
   const fb = applyMasterFallback(extracted, master, key)
   const hasIds = Boolean(sapCode && heatCode)
   const hasValues = fb.values.length > 0
-  const confidence = result.confidence && extracted.length > 0 ? result.confidence : demoMatch && hasValues ? 0.95 : hasValues ? 0.7 : 0.2
+  const confidence = result.confidence && extracted.length > 0 ? result.confidence : hasValues ? 0.7 : 0.2
   let status: IngestItem['status'] = 'MATCHED'
-  let message = demoMatch ? 'Demo file matched' : 'Matched'
+  let message = 'Matched'
   if (isImage && !hasValues) {
     message = 'Image attached — enter values at review'
   } else if (!hasIds || !hasValues || confidence < 0.45 || result.warnings.length > 0) {
@@ -157,38 +167,30 @@ export async function processOneFile(
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /**
- * Sequential ~10s pipeline for one file: Uploading -> Parsing -> Extracting
- * -> Matching. Only the active file advances; the rest stay QUEUED.
- * Throws nothing — failures resolve to FAILED so the row can be retried.
+ * Sequential pipeline for one file: Uploading -> Parsing -> Extracting
  */
 export async function processQueuedFile(
   file: File,
   sectionKey: string,
   masters: ProductMaster[],
-  patch: (p: Partial<IngestItem>) => void,
+  onPatch: (p: Partial<IngestItem>) => void,
 ): Promise<IngestOutcome> {
-  const staged = async (from: number, to: number, ms: number, stage: string, status: IngestStatus) => {
-    patch({ status, stage, progress: from })
-    const steps = 8
-    for (let i = 1; i <= steps; i++) {
-      await sleep(ms / steps)
-      patch({ progress: Math.round(from + ((to - from) * i) / steps), stage, status })
-    }
-  }
-  try {
-    await staged(2, 25, 2000, 'Uploading file…', 'UPLOADING')
-    patch({ status: 'PARSING', stage: 'Parsing report text…', progress: 28 })
-    const out = await processOneFile(file, sectionKey, masters, (p) =>
-      patch({ progress: 28 + Math.round(p * 0.3), stage: 'Extracting measured values…', status: 'PARSING' }),
-    )
-    await staged(60, 82, 2500, 'Extracting measured values…', 'PARSING')
-    await staged(82, 100, 2500, 'Matching SAP / Heat code…', 'PARSING')
-    return out
-  } catch (err) {
-    return {
-      result: undefined, sapCode: '', heatCode: '', confidence: 0,
-      message: err instanceof Error ? err.message : 'Processing failed — retry this file.',
-      status: 'FAILED', values: [], valueSource: {},
-    }
-  }
+  const isImage = file.type.startsWith('image/') || IMAGE_EXT.test(file.name)
+  const fast = isImage || lookupDemoFixture(file.name, sectionKey) !== undefined
+  const scale = fast ? 0.05 : 1
+
+  onPatch({ status: 'UPLOADING', stage: 'Uploading document…', progress: 10 })
+  await sleep(150 * scale)
+  onPatch({ progress: 25 })
+  await sleep(150 * scale)
+
+  onPatch({ status: 'PARSING', stage: 'Parsing contents & OCR…', progress: 40 })
+  await sleep(250 * scale)
+  onPatch({ progress: 65 })
+  await sleep(250 * scale)
+
+  onPatch({ status: 'EXTRACTING', stage: 'Extracting test parameters…', progress: 85 })
+  const outcome = await processOneFile(file, sectionKey, masters, (p) => onPatch({ progress: Math.min(95, p) }))
+
+  return outcome
 }
