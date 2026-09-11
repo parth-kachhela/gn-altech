@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   FileText, Factory, FlaskConical, LayoutDashboard, Settings, Boxes,
-  FileClock, ClipboardList, PlusCircle, UploadCloud, ListChecks, CheckCircle2,
+  ClipboardList, PlusCircle, UploadCloud, ListChecks, CheckCircle2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -13,7 +13,6 @@ const SUPER_NAV: Array<{ to: string; label: string; icon: typeof LayoutDashboard
   { to: '/heat-records', label: 'Heats', icon: Factory, cap: 'manageHeatRecords' },
   { to: '/certificates', label: 'Certificates', icon: FileText, cap: 'viewCertificates' },
   { to: '/departments', label: 'Departments', icon: ClipboardList, cap: 'viewDepartmentRequests' },
-  { to: '/departments/inbox', label: 'Dept. Inbox', icon: FileClock, cap: 'uploadReports' },
   { to: '/settings', label: 'Settings', icon: Settings, cap: 'accessSettings' },
 ]
 

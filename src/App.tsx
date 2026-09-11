@@ -7,7 +7,6 @@ import { ProductMastersPage } from '@/pages/ProductMastersPage'
 import { ProductMasterDetailPage } from '@/pages/ProductMasterDetailPage'
 import { MasterImportPage } from '@/pages/MasterImportPage'
 import { DepartmentRequestsPage } from '@/pages/DepartmentRequestsPage'
-import { DepartmentInboxPage } from '@/pages/DepartmentInboxPage'
 import { HeatRecordsPage } from '@/pages/HeatRecordsPage'
 import { HeatRecordNewPage } from '@/pages/HeatRecordNewPage'
 import { HeatRecordDetailPage } from '@/pages/HeatRecordDetailPage'
@@ -59,7 +58,7 @@ function App() {
             <Route path="certificates/:id/edit" element={<RequireCapability capability="createCertificate"><CertificateWizardPage /></RequireCapability>} />
 
             <Route path="departments" element={<RequireCapability capability="viewDepartmentRequests"><DepartmentRequestsPage /></RequireCapability>} />
-            <Route path="departments/inbox" element={<RequireCapability capability="uploadReports"><DepartmentInboxPage /></RequireCapability>} />
+            <Route path="departments/inbox" element={<Navigate to="/departments" replace />} />
 
             <Route path="chemical" element={<ChemicalDashboardPage />} />
             <Route path="chemical/add-heat" element={<ChemicalAddHeatPage />} />

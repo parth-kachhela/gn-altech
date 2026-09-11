@@ -6,7 +6,6 @@ import {
   FilePlus2,
   FileText,
   Factory,
-  FlaskConical,
   ShieldCheck,
   Boxes,
   UploadCloud,
@@ -26,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/PageHeader'
 import {
   DropdownMenu,
@@ -122,6 +122,53 @@ export function DashboardPage() {
     },
   ]
 
+  const departments = [
+    {
+      name: 'Chemical Lab',
+      desc: 'Creates heats & parses spectro data',
+      statusText: `${wf.chemicalDone} heat(s) entered`,
+      home: '/chemical',
+      actionLabel: '+ Add Heat',
+      actionUrl: '/chemical/add-heat',
+      secondaryAction: 'Bulk Upload',
+      secondaryUrl: '/chemical/bulk-upload',
+      pending: 0,
+    },
+    {
+      name: 'Micro Lab',
+      desc: 'Microstructure BMP/PDF analysis',
+      statusText: wf.microPending > 0 ? `${wf.microPending} pending reports` : 'All completed',
+      home: '/micro',
+      actionLabel: 'Upload Reports',
+      actionUrl: '/micro/upload',
+      secondaryAction: 'View Lab',
+      secondaryUrl: '/micro',
+      pending: wf.microPending,
+    },
+    {
+      name: 'Tensile Lab',
+      desc: 'UTS, Yield & Elongation tests',
+      statusText: wf.tensilePending > 0 ? `${wf.tensilePending} pending reports` : 'All completed',
+      home: '/tensile',
+      actionLabel: 'Upload Reports',
+      actionUrl: '/tensile/upload',
+      secondaryAction: 'View Lab',
+      secondaryUrl: '/tensile',
+      pending: wf.tensilePending,
+    },
+    {
+      name: 'Hardness Lab',
+      desc: 'BHN hardness measurements',
+      statusText: wf.hardnessPending > 0 ? `${wf.hardnessPending} pending reports` : 'All completed',
+      home: '/hardness',
+      actionLabel: 'Upload Reports',
+      actionUrl: '/hardness/upload',
+      secondaryAction: 'View Lab',
+      secondaryUrl: '/hardness',
+      pending: wf.hardnessPending,
+    },
+  ]
+
   return (
     <div>
       <PageHeader
@@ -193,6 +240,53 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      {/* Department Workspaces Grid */}
+      <div className="mt-5">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold">Testing Departments</h2>
+            <p className="text-xs text-muted-foreground">Direct access to upload and review lab reports</p>
+          </div>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/departments">
+              Department Testing View <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {departments.map((dept) => (
+            <Card key={dept.name} className="flex flex-col justify-between transition-colors hover:border-primary/40">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-semibold">{dept.name}</CardTitle>
+                  {dept.pending > 0 ? (
+                    <Badge variant="outline" className="border-amber-500/50 text-amber-700 dark:text-amber-400 text-[10px]">
+                      {dept.pending} pending
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                      Active
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">{dept.desc}</p>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                <div className="text-xs font-medium">{dept.statusText}</div>
+                <div className="flex items-center gap-1.5 pt-1">
+                  <Button asChild size="sm" className="h-7 text-xs flex-1">
+                    <Link to={dept.actionUrl}>{dept.actionLabel}</Link>
+                  </Button>
+                  <Button asChild variant="outline" size="sm" className="h-7 text-xs">
+                    <Link to={dept.secondaryUrl}>{dept.secondaryAction}</Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
 
       <Card className="mt-5">
@@ -305,55 +399,6 @@ export function DashboardPage() {
           </Table>
         </CardContent>
       </Card>
-
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Workflow</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p className="flex gap-2">
-              <UploadCloud className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              1. Import the master workbook (Product Master, Heat Codes, Report Index).
-            </p>
-            <p className="flex gap-2">
-              <Boxes className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              2. Create a certificate from a SAP product master and select heat codes.
-            </p>
-            <p className="flex gap-2">
-              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-              3. Upload test reports, review extracted values, then issue PDF / Excel.
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Status guide</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>
-              <span className="font-medium text-foreground">DRAFT</span> — created, awaiting work.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">PENDING</span> — one or more test
-              reports are missing.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">REVIEWED</span> — all reports complete
-              and reviewed.
-            </p>
-            <p>
-              <span className="font-medium text-foreground">ISSUED</span> — certificate issued to
-              customer.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-        <FlaskConical className="h-3.5 w-3.5" />
-        Data is stored in your browser — no server required.
-      </p>
     </div>
   )
 }
