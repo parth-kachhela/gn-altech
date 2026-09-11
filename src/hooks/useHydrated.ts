@@ -36,7 +36,14 @@ export function useStoresHydrated(): boolean {
   const masterHydrated = useProductMastersHydrated()
   const auditHydrated = useAuditHydrated()
   const deptHydrated = useDepartmentRequestsHydrated()
-  return certHydrated && heatHydrated && masterHydrated && auditHydrated && deptHydrated
+  // Safety timeout: never leave the whole app stuck on a loader because one
+  // persisted slice is slow — render from cache/server after 1.2s regardless.
+  const [timedOut, setTimedOut] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setTimedOut(true), 1200)
+    return () => clearTimeout(t)
+  }, [])
+  return (certHydrated && heatHydrated && masterHydrated && auditHydrated && deptHydrated) || timedOut
 }
 
 export function useHydratedAfter(millis = 50): boolean {

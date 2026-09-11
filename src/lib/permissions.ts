@@ -74,15 +74,40 @@ export function getCapabilities(role?: Role): Capabilities {
 
 export const DEPARTMENTS = [
   { id: 'CHEMICAL', label: 'Chemical Lab', reportTypes: ['CHEMICAL'] },
-  { id: 'MECHANICAL', label: 'Mechanical Lab', reportTypes: ['MECHANICAL'] },
-  { id: 'HARDNESS', label: 'Hardness Lab', reportTypes: ['HARDNESS'] },
+  { id: 'HARDNESS', label: 'Hardness Lab', reportTypes: ['HARDNESS', 'MECHANICAL'] },
   { id: 'MICRO', label: 'Micro Lab', reportTypes: ['MICRO'] },
   { id: 'TENSILE', label: 'Tensile Lab', reportTypes: ['TENSILE'] },
 ] as const
 
+export function normalizeSectionKey(sectionKey: string): string {
+  if (sectionKey === 'MECHANICAL') return 'HARDNESS'
+  return sectionKey
+}
+
 export function departmentForSectionKey(sectionKey: string): string {
+  const key = normalizeSectionKey(sectionKey)
   const found = DEPARTMENTS.find((d) =>
-    (d.reportTypes as readonly string[]).includes(sectionKey),
+    (d.reportTypes as readonly string[]).includes(key),
   )
   return found?.label ?? 'General'
+}
+
+// ---- Multi-department workflow helpers (additive) ----
+export const WORKFLOW_DEPTS = [
+  { key: 'CHEMICAL', label: 'Chemical Lab', home: '/chemical' },
+  { key: 'MICRO', label: 'Micro Lab', home: '/micro' },
+  { key: 'TENSILE', label: 'Tensile Lab', home: '/tensile' },
+  { key: 'HARDNESS', label: 'Hardness Lab', home: '/hardness' },
+] as const
+
+export type WorkflowDeptKey = (typeof WORKFLOW_DEPTS)[number]['key']
+
+export function deptHome(department?: string): string {
+  const found = WORKFLOW_DEPTS.find((d) => d.label === department)
+  return found?.home ?? '/dashboard'
+}
+
+export function sectionKeyForDeptLabel(department?: string): string {
+  const found = DEPARTMENTS.find((d) => d.label === department)
+  return found?.reportTypes[0] ?? ''
 }

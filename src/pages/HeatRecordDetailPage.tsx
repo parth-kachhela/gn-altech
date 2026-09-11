@@ -6,8 +6,12 @@ import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/PageHeader'
 import { NotFoundState, LoadingPage } from '@/components/EmptyState'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
+import { useCertificateStore } from '@/stores/certificateStore'
+import { useAuthStore } from '@/stores/authStore'
 import { useProductMasterStore } from '@/stores/productMasterStore'
 import { useHeatRecordsHydrated } from '@/hooks/useHydrated'
+import { getHeatWorkflow } from '@/lib/heatWorkflow'
+import { DeptBadge } from '@/components/workflow/WorkflowBadges'
 import { toast } from 'sonner'
 
 function DetailRow({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
@@ -28,6 +32,38 @@ export function HeatRecordDetailPage() {
   const master = record
     ? masters.find((m) => m.sapNo.toLowerCase() === record.sapNo.toLowerCase())
     : undefined
+  const user = useAuthStore((s) => s.user)
+  const wf = record ? getHeatWorkflow(record) : null
+
+  const generateCertificate = () => {
+    if (!record || !wf || !master) return
+    if (!wf.certificateReady) { toast.error('All four department reports must be completed first'); return }
+    const store = useCertificateStore.getState()
+    const num = `TC-${new Date().getFullYear()}-${String(store.certificates.length + 1).padStart(6, '0')}`
+    const date = new Date().toLocaleDateString('en-GB').replaceAll('/', '.')
+    const cid = store.createDraft(num, date)
+    store.setProductSnapshot(cid, master)
+    const secByKey = new Map(master.sections.map((s) => [s.key, s]))
+    const reportRecords = (record.reports ?? [])
+      .filter((r) => ['CHEMICAL', 'MICRO', 'TENSILE', 'HARDNESS'].includes(r.sectionKey))
+      .flatMap((r) => {
+        const sec = secByKey.get(r.sectionKey)
+        if (!sec) return []
+        return [{
+          id: `${Date.now()}-${r.sectionKey}`, sectionId: sec.id, sectionKey: sec.key,
+          sectionName: sec.name, parsedValues: r.parsedValues, confirmed: true,
+          sourceType: 'DEPARTMENT' as const, warnings: r.warnings,
+          status: 'COMPLETE' as const, uploadedBy: r.uploadedBy, uploadedAt: r.uploadedAt,
+        }]
+      })
+    store.addHeatSelection(cid, {
+      id: `${Date.now()}-sel`, heatRecordId: record.id, heatCode: record.heatCode,
+      batchNo: record.batchNo, heatCodeOnly: true, includeHeatLevel: true,
+      selectedSamples: [], reportRecords,
+    })
+    toast.success(`Certificate ${num} drafted from ${record.heatCode}`)
+    navigate(`/certificates/${cid}`)
+  }
 
   if (!hydrated) return <LoadingPage label="Loading heat record…" />
 
@@ -86,6 +122,12 @@ export function HeatRecordDetailPage() {
               <FilePlus2 className="h-4 w-4" />
               Use in Certificate
             </Button>
+            {user?.role === 'SUPER_ADMIN' && wf ? (
+              <Button onClick={generateCertificate} disabled={!wf.certificateReady}
+                title={wf.certificateReady ? 'Generate Test Certificate' : 'Waiting for all departments'}>
+                Generate Test Certificate
+              </Button>
+            ) : null}
             <Button asChild>
               <Link to={`/heat-records/${record.id}/edit`}>
                 <Pencil className="h-4 w-4" />
@@ -95,6 +137,21 @@ export function HeatRecordDetailPage() {
           </>
         }
       />
+
+      {wf ? (
+        <Card className="mb-4">
+          <CardContent className="flex flex-wrap items-center gap-2 p-4 text-sm">
+            <span className="font-semibold">Workflow:</span>
+            <span>Chemical <DeptBadge value={wf.chemical} /></span>
+            <span>Micro <DeptBadge value={wf.micro} /></span>
+            <span>Tensile <DeptBadge value={wf.tensile} /></span>
+            <span>Hardness <DeptBadge value={wf.hardness} /></span>
+            <Badge variant={wf.certificateReady ? 'default' : 'outline'}>
+              {wf.certificateReady ? 'Certificate Ready' : 'Certificate Waiting'}
+            </Badge>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>

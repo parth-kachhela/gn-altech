@@ -41,10 +41,9 @@ export function createEmptyMaster(): ProductMaster {
   const now = nowIso()
   const sections: MasterSection[] = [
     createSection('Chemical Analysis', 'CHEMICAL', { required: true, fileTypeHint: 'PDF', order: 0 }),
-    createSection('Mechanical Properties', 'MECHANICAL', { required: false, fileTypeHint: 'PDF', order: 1 }),
-    createSection('Hardness', 'HARDNESS', { required: true, fileTypeHint: 'PDF', order: 2 }),
-    createSection('Micro Structure', 'MICRO', { required: true, fileTypeHint: 'BMP / PNG / JPG', order: 3 }),
-    createSection('Tensile', 'TENSILE', { required: true, fileTypeHint: 'PDF', order: 4 }),
+    createSection('Hardness', 'HARDNESS', { required: true, fileTypeHint: 'PDF', order: 1 }),
+    createSection('Micro Structure', 'MICRO', { required: true, fileTypeHint: 'BMP / PNG / JPG', order: 2 }),
+    createSection('Tensile', 'TENSILE', { required: true, fileTypeHint: 'PDF', order: 3 }),
   ]
   return {
     id: createId(),

@@ -23,6 +23,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { deleteImportDraft } from '@/lib/importDraftStorage'
+import { seedDeptDemo } from '@/data/deptDemoSeed'
+import { useAuthStore } from '@/stores/authStore'
+import { getServerUrl, setServerUrl, useServerHealth } from '@/services/api'
 
 const STORE_KEYS = [
   'gn-alt-product-masters',
@@ -68,6 +71,8 @@ export function SettingsPage() {
   const toggleTheme = useThemeStore((s) => s.toggleTheme)
   const { toggleTheme: applyTheme } = useTheme()
   const [confirmReset, setConfirmReset] = useState<'reset' | 'clear' | null>(null)
+  const serverStatus = useServerHealth()
+  const [serverUrl, setUrl] = useState(getServerUrl())
   const signatureInputRef = useRef<HTMLInputElement>(null)
   const stampInputRef = useRef<HTMLInputElement>(null)
 
@@ -239,9 +244,37 @@ export function SettingsPage() {
 
           <Card>
             <CardHeader>
+              <CardTitle className="text-base">Multi-User Server</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Status: {serverStatus === 'online' ? '● Online (shared across browsers)' : serverStatus === 'offline' ? '○ Offline (browser-local demo)' : '…checking'}
+                {' '}— run <span className="font-mono">cd ../gn-altech-backend && docker compose up --build</span>
+              </p>
+              <div className="flex gap-2">
+                <Input value={serverUrl} onChange={(e) => setUrl(e.target.value)} className="font-mono text-xs" />
+                <Button variant="outline" onClick={() => { setServerUrl(serverUrl); toast.success('Server URL saved'); }}>Save</Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle className="text-base">Data Management</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <Button
+                variant="default"
+                className="w-full"
+                onClick={() => {
+                  const user = useAuthStore.getState().user?.name ?? 'admin'
+                  const out = seedDeptDemo(user)
+                  toast.success(`Demo loaded: ${out.heats} heats, ${out.masters} products`)
+                }}
+              >
+                <Database className="h-4 w-4" />
+                Load Dept Demo Data
+              </Button>
               <Button
                 variant="outline"
                 className="w-full"

@@ -44,6 +44,9 @@ import { getCapabilities, ROLES, ROLE_LABELS } from '@/lib/permissions'
 import { useStoresHydrated } from '@/hooks/useHydrated'
 import { LoadingPage } from '@/components/EmptyState'
 import { deriveCertificateStatus } from '@/lib/certificateStatus'
+import { getHeatWorkflow, workflowCounts } from '@/lib/heatWorkflow'
+import { DeptBadge } from '@/components/workflow/WorkflowBadges'
+import { seedDeptDemo } from '@/data/deptDemoSeed'
 import { CertificateStatusBadge } from '@/components/certificate-flow/ReportStatusBadge'
 import { toast } from 'sonner'
 
@@ -89,6 +92,8 @@ export function DashboardPage() {
   if (!hydrated) return <LoadingPage label="Loading dashboard…" />
 
   const recent = [...certificates].slice(0, 6)
+  const wf = workflowCounts(heatRecords)
+  const isSuper = user?.role === 'SUPER_ADMIN'
 
   const kpis = [
     {
@@ -189,6 +194,61 @@ export function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      <Card className="mt-5">
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base">Heat Workflow — Chemical → Micro / Tensile / Hardness → Certificate</CardTitle>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/heat-records">View all <ArrowRight className="h-4 w-4" /></Link>
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {isSuper ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Total {wf.total} · Chemical done {wf.chemicalDone} · Micro pending {wf.microPending} · Tensile pending {wf.tensilePending} · Hardness pending {wf.hardnessPending} · Ready {wf.ready} · Issued {stats.issued}</span>
+              {wf.total === 0 ? (
+                <Button size="sm" variant="outline" onClick={() => { seedDeptDemo(user?.name ?? 'admin'); toast.success('Demo data loaded'); }}>Load demo data</Button>
+              ) : null}
+            </div>
+          ) : null}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Heat Code</TableHead>
+                <TableHead>SAP Code</TableHead>
+                <TableHead>Chemical</TableHead>
+                <TableHead>Micro</TableHead>
+                <TableHead>Tensile</TableHead>
+                <TableHead>Hardness</TableHead>
+                <TableHead>Certificate</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {heatRecords.slice(0, 12).map((h) => {
+                const w = getHeatWorkflow(h)
+                return (
+                  <TableRow key={h.id} className="cursor-pointer" onClick={() => navigate(`/heat-records/${h.id}`)}>
+                    <TableCell className="font-mono font-medium">{h.heatCode}</TableCell>
+                    <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
+                    <TableCell><DeptBadge value={w.chemical} /></TableCell>
+                    <TableCell><DeptBadge value={w.micro} /></TableCell>
+                    <TableCell><DeptBadge value={w.tensile} /></TableCell>
+                    <TableCell><DeptBadge value={w.hardness} /></TableCell>
+                    <TableCell>
+                      <span className={`text-xs font-semibold ${w.certificateReady ? 'text-green-700' : 'text-muted-foreground'}`}>
+                        {w.certificateReady ? 'Ready' : 'Waiting'}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+              {heatRecords.length === 0 ? (
+                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No heats yet. Chemical creates the first heat, or load demo data above.</TableCell></TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
       <Card className="mt-5">
         <CardHeader className="flex-row items-center justify-between space-y-0">

@@ -4,11 +4,21 @@ import { baseResult, value } from '@/services/parsers/common'
 export function parseHardnessReport(text: string): ParsedReportResult {
   const result = baseResult(text)
 
+  // GN Altech layout (pdf text is space-joined):
+  // "1 G6E 01 4.589 171 OK 2 2 4.519 177 OK ..."  (SrNo JobNo Diameter BHN Result)
+  // "59 4.247 202 OK" style rows also occur.
   const readings: Array<{ sample: string; bhn: string }> = []
-  const readingRe = /(\d+-\d+)\s+[\d.]+\s+(\d+)\s+(?:OK|FAIL|NG)/gi
+  const rowRe = /(^|\s)([A-Z0-9]+(?:\s+[A-Z0-9]+)?)\s+(\d\.\d+)\s+(\d{2,4})\s+(OK|FAIL|NG)/gi
   let m: RegExpExecArray | null
-  while ((m = readingRe.exec(text)) !== null) {
-    readings.push({ sample: m[1], bhn: m[2] })
+  while ((m = rowRe.exec(text)) !== null) {
+    readings.push({ sample: m[2].trim().replace(/\s+/g, ' '), bhn: m[4] })
+  }
+  // Fallback: legacy "12-34 <dia> <bhn> OK" rows
+  if (readings.length === 0) {
+    const legacyRe = /(\d+-\d+)\s+[\d.]+\s+(\d+)\s+(?:OK|FAIL|NG)/gi
+    while ((m = legacyRe.exec(text)) !== null) {
+      readings.push({ sample: m[1], bhn: m[2] })
+    }
   }
 
   const average = text.match(/Average\s*BHN:\s*([\d.]+)/i)?.[1]

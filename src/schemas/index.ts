@@ -32,7 +32,7 @@ export type CertificateInfoValues = z.infer<typeof certificateInfoSchema>
 
 export const reportParserSchema = z.object({
   fileName: z.string().min(1),
-  reportType: z.enum(['CHEMICAL', 'MECHANICAL', 'MICRO_STRUCTURE']),
+  reportType: z.enum(['CHEMICAL', 'HARDNESS', 'MICRO_STRUCTURE']),
 })
 
 export type ReportParserValues = z.infer<typeof reportParserSchema>

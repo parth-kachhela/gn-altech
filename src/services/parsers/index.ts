@@ -6,14 +6,13 @@ import { parseTensileReport } from '@/services/parsers/tensile'
 import { parseMicroStructureImage } from '@/services/parsers/micro'
 import { parseGenericText } from '@/services/parsers/generic'
 
-export type ParserKind = 'chemical' | 'hardness' | 'tensile' | 'mechanical' | 'micro' | 'generic'
+export type ParserKind = 'chemical' | 'hardness' | 'tensile' | 'micro' | 'generic'
 
 export function parserKindForSection(sectionKey: string): ParserKind {
   const k = sectionKey.toLowerCase()
   if (k.includes('chem')) return 'chemical'
-  if (k.includes('hard')) return 'hardness'
+  if (k.includes('hard') || k.includes('mech')) return 'hardness'
   if (k.includes('tens')) return 'tensile'
-  if (k.includes('mech')) return 'mechanical'
   if (k.includes('micro')) return 'micro'
   return 'generic'
 }
@@ -37,8 +36,6 @@ export async function parseReport(
       return parseHardnessReport(text)
     case 'tensile':
       return parseTensileReport(text)
-    case 'mechanical':
-      return parseGenericText(text)
     default:
       return parseGenericText(text)
   }

@@ -38,8 +38,8 @@ interface GroupCol {
 const GROUP_SECTIONS: Record<string, string> = {
   'chemical analysis': 'CHEMICAL',
   'chemical': 'CHEMICAL',
-  'mechanical properties': 'MECHANICAL',
-  'mechanical': 'MECHANICAL',
+  'mechanical properties': 'HARDNESS',
+  'mechanical': 'HARDNESS',
   hardness: 'HARDNESS',
   'micro structure': 'MICRO',
   'micro': 'MICRO',
@@ -48,7 +48,6 @@ const GROUP_SECTIONS: Record<string, string> = {
 
 const SECTION_DEFAULTS: Record<string, { name: string; required: boolean; fileTypeHint: string }> = {
   CHEMICAL: { name: 'Chemical Analysis', required: true, fileTypeHint: 'PDF' },
-  MECHANICAL: { name: 'Mechanical Properties', required: false, fileTypeHint: 'PDF' },
   HARDNESS: { name: 'Hardness', required: true, fileTypeHint: 'PDF' },
   MICRO: { name: 'Micro Structure', required: true, fileTypeHint: 'BMP / PNG / JPG' },
   TENSILE: { name: 'Tensile', required: true, fileTypeHint: 'PDF' },
@@ -56,10 +55,9 @@ const SECTION_DEFAULTS: Record<string, { name: string; required: boolean; fileTy
 
 const SECTION_ORDER: Record<string, number> = {
   CHEMICAL: 0,
-  MECHANICAL: 1,
-  HARDNESS: 2,
-  MICRO: 3,
-  TENSILE: 4,
+  HARDNESS: 1,
+  MICRO: 2,
+  TENSILE: 3,
 }
 
 function parseHeader(header: string): { name: string; unit?: string } {
@@ -234,8 +232,8 @@ function parseProductMasterSheet(
 const REPORT_TYPE_TO_KEY: Record<string, string> = {
   'chemical analysis': 'CHEMICAL',
   'chemical': 'CHEMICAL',
-  'mechanical properties': 'MECHANICAL',
-  'mechanical': 'MECHANICAL',
+  'mechanical properties': 'HARDNESS',
+  'mechanical': 'HARDNESS',
   hardness: 'HARDNESS',
   'micro structure': 'MICRO',
   'micro': 'MICRO',
@@ -308,7 +306,6 @@ export function parseMasterWorkbook(
 
   const sectionsConfig: ImportDraft['sectionsConfig'] = [
     { key: 'CHEMICAL', name: 'Chemical Analysis', required: true, fileTypeHint: 'PDF' },
-    { key: 'MECHANICAL', name: 'Mechanical Properties', required: false, fileTypeHint: 'PDF' },
     { key: 'HARDNESS', name: 'Hardness', required: true, fileTypeHint: 'PDF' },
     { key: 'MICRO', name: 'Micro Structure', required: true, fileTypeHint: 'BMP / PNG / JPG' },
     { key: 'TENSILE', name: 'Tensile', required: true, fileTypeHint: 'PDF' },

@@ -8,7 +8,6 @@ export type RuleType =
 
 export const STANDARD_SECTION_KEYS = [
   'CHEMICAL',
-  'MECHANICAL',
   'HARDNESS',
   'MICRO',
   'TENSILE',

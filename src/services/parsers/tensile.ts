@@ -6,8 +6,8 @@ export function parseTensileReport(text: string): ParsedReportResult {
 
   const num = (re: RegExp) => text.match(re)?.[1]
 
-  const yieldStress = num(/Yield\s*Stress\s*:\s*([\d.]+)/i)
-  const uts = num(/Ultimate\s*Tensile\s*Strength\s*:\s*([\d.]+)/i)
+  const yieldStress = num(/Yield\s*Stress\s*:?\s*:?\s*([\d.]+)/i)
+  const uts = num(/(?:Ultimate\s*Tensile\s*Strength|Ult\.?\s*Strength)\s*:?\s*([\d.]+)/i)
   const elong = num(/Elongation\s*:\s*([\d.]+)/i)
   const maxForce = num(/Maximum\s*Force\s*\(Fm\)\s*:\s*([\d.]+)/i)
   const maxDisp = num(/Max\.?\s*Displacement\s*:\s*([\d.]+)/i)
