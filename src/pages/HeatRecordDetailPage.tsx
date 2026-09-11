@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, FilePlus2, Pencil } from 'lucide-react'
+import { FilePlus2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -58,8 +58,8 @@ export function HeatRecordDetailPage() {
       })
     store.addHeatSelection(cid, {
       id: `${Date.now()}-sel`, heatRecordId: record.id, heatCode: record.heatCode,
-      batchNo: record.batchNo, heatCodeOnly: true, includeHeatLevel: true,
-      selectedSamples: [], reportRecords,
+      batchNo: record.batchNo, heatCodeOnly: record.heats.length === 0, includeHeatLevel: record.heats.length === 0,
+      selectedSamples: record.heats.map((s) => s.id), reportRecords,
     })
     toast.success(`Certificate ${num} drafted from ${record.heatCode}`)
     navigate(`/certificates/${cid}`)
@@ -79,10 +79,11 @@ export function HeatRecordDetailPage() {
 
   const demoCount = Object.keys(record.demoReports ?? {}).length
 
-  const sampleGroups: Array<{ sampleId?: string; label: string; quantity?: string }> = [
-    { sampleId: undefined, label: 'Heat Code Only', quantity: undefined },
-    ...record.heats.map((s) => ({ sampleId: s.id, label: s.label, quantity: s.quantity })),
-  ]
+  // If the heat has samples, show each sample cleanly without a redundant "Heat Code Only" section
+  const sampleGroups: Array<{ sampleId?: string; label: string; quantity?: string }> =
+    record.heats.length > 0
+      ? record.heats.map((s) => ({ sampleId: s.id, label: s.label, quantity: s.quantity }))
+      : [{ sampleId: undefined, label: record.heatCode, quantity: record.quantity }]
 
   const knownSampleIds = new Set(record.heats.map((s) => s.id))
   const unlinkedIds = Array.from(
@@ -196,13 +197,13 @@ export function HeatRecordDetailPage() {
         </CardHeader>
         <CardContent>
           {record.heats.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No samples added.</p>
+            <p className="text-sm text-muted-foreground">Single Heat Code ({record.heatCode}) — no sub-samples configured.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {record.heats.map((s) => (
-                <Badge key={s.id} variant="outline" className="px-3 py-1 font-mono">
-                  {record.heatCode}-{s.label}
-                  {s.quantity ? ` · ${s.quantity}` : ''}
+                <Badge key={s.id} variant="outline" className="px-3 py-1 font-mono text-sm">
+                  Sample {record.heatCode}-{s.label}
+                  {s.quantity ? ` · Qty: ${s.quantity}` : ''}
                 </Badge>
               ))}
             </div>
@@ -213,7 +214,9 @@ export function HeatRecordDetailPage() {
       <Card className="mt-4">
         <CardHeader>
           <CardTitle className="text-sm">Department Report Requests</CardTitle>
-          <p className="text-xs text-muted-foreground">Organized by heat code and sample.</p>
+          <p className="text-xs text-muted-foreground">
+            {record.heats.length > 0 ? 'Organized per Heat Sample.' : 'Single Heat Level.'}
+          </p>
         </CardHeader>
         <CardContent>
           {record.requests?.length === 0 ? (
@@ -227,7 +230,7 @@ export function HeatRecordDetailPage() {
                   <div key={group.sampleId ?? 'only'} className="rounded-md border">
                     <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                       <span className="font-mono text-xs font-medium">
-                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : 'Heat Code Only'}
+                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : `Heat Code: ${record.heatCode}`}
                       </span>
                       <span className="text-xs text-muted-foreground">{reqs.length} request(s)</span>
                     </div>
@@ -257,7 +260,9 @@ export function HeatRecordDetailPage() {
       <Card className="mt-4">
         <CardHeader>
           <CardTitle className="text-sm">Report Data</CardTitle>
-          <p className="text-xs text-muted-foreground">Organized by heat code and sample.</p>
+          <p className="text-xs text-muted-foreground">
+            {record.heats.length > 0 ? 'Organized per Heat Sample.' : 'Single Heat Level.'}
+          </p>
         </CardHeader>
         <CardContent>
           {(record.reports?.length ?? 0) === 0 && (record.requests?.length ?? 0) === 0 ? (
@@ -279,9 +284,9 @@ export function HeatRecordDetailPage() {
                   <div key={group.sampleId ?? 'only'} className="rounded-md border bg-background">
                     <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
                       <span className="font-mono text-xs font-medium">
-                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : 'Heat Code Only'}
+                        {group.sampleId ? `Sample ${record.heatCode}-${group.label}` : `Heat Code: ${record.heatCode}`}
                         {group.quantity ? (
-                          <span className="ml-1 font-normal text-muted-foreground">· {group.quantity}</span>
+                          <span className="ml-1 font-normal text-muted-foreground">· Qty: {group.quantity}</span>
                         ) : null}
                       </span>
                       <span className="text-xs text-muted-foreground">{reports.length} report(s)</span>
@@ -318,24 +323,21 @@ export function HeatRecordDetailPage() {
                                         <dt className="truncate text-muted-foreground">{pv.name}</dt>
                                         <dd className="font-mono font-medium">
                                           {pv.value}
-                                          {pv.unit ? ` ${pv.unit}` : ''}
+                                          {pv.unit ? <span className="ml-0.5 text-muted-foreground">{pv.unit}</span> : ''}
                                         </dd>
                                       </div>
                                     ))}
                                   </dl>
-                                  {rep.uploadedBy || rep.fileMetadata ? (
-                                    <p className="mt-1 text-[10px] text-muted-foreground">
-                                      {rep.fileMetadata?.fileName ?? 'Report'}
-                                      {rep.uploadedBy ? ` by ${rep.uploadedBy}` : ''}
-                                      {rep.uploadedAt ? ` · ${new Date(rep.uploadedAt).toLocaleString()}` : ''}
-                                    </p>
+                                  {rep.fileMetadata ? (
+                                    <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                                      <span className="truncate">File: {rep.fileMetadata.fileName}</span>
+                                      {rep.uploadedBy ? <span>by {rep.uploadedBy}</span> : null}
+                                    </div>
                                   ) : null}
                                 </>
-                              ) : req ? (
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  Requested from {req.department}
-                                </p>
-                              ) : null}
+                              ) : (
+                                <p className="mt-0.5 text-xs text-muted-foreground">Awaiting report upload.</p>
+                              )}
                             </div>
                           )
                         })
@@ -348,15 +350,6 @@ export function HeatRecordDetailPage() {
           )}
         </CardContent>
       </Card>
-
-      <div className="mt-5">
-        <Button variant="ghost" asChild>
-          <Link to="/heat-records">
-            <ArrowLeft className="h-4 w-4" />
-            Back to Heat Records
-          </Link>
-        </Button>
-      </div>
     </div>
   )
 }

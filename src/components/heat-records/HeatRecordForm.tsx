@@ -14,7 +14,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProductMastersHydrated } from '@/hooks/useHydrated'
 import { departmentForSectionKey } from '@/lib/permissions'
 import { createId, dmYtoInput, inputToDmY, toDmY } from '@/lib/id'
-import type { HeatRecord, HeatReportRequest, ProductMaster } from '@/types'
+import type { HeatRecord, HeatReportRequest, MasterSection, ProductMaster } from '@/types'
 
 export function HeatRecordForm({
   initial,
@@ -60,11 +60,13 @@ export function HeatRecordForm({
   }
 
   const selectAllDefaultsFor = (m: ProductMaster, sampleId: string | undefined) => {
-    const next: Record<string, boolean> = { ...selectedRequests }
-    for (const section of m.sections) {
-      next[requestKey(sampleId, section.key)] = true
-    }
-    setSelectedRequests(next)
+    setSelectedRequests((prev) => {
+      const next: Record<string, boolean> = { ...prev }
+      for (const section of m.sections) {
+        next[requestKey(sampleId, section.key)] = true
+      }
+      return next
+    })
   }
 
   useEffect(() => {
@@ -79,14 +81,23 @@ export function HeatRecordForm({
     setMaster(m)
     setQuery(`${m.sapNo} — ${m.partNo} ${m.description}`)
     setOpen(false)
-    selectAllDefaultsFor(m, undefined)
+    if (samples.length === 0) {
+      selectAllDefaultsFor(m, undefined)
+    } else {
+      for (const s of samples) {
+        selectAllDefaultsFor(m, s.id)
+      }
+    }
   }
 
   const addSample = () => {
-    const label = String.fromCharCode(65 + samples.length)
+    const nextLetter = String.fromCharCode(65 + samples.length)
     const id = createId()
-    setSamples((s) => [...s, { id, label }])
-    if (master) selectAllDefaultsFor(master, id)
+    const nextSamples = [...samples, { id, label: nextLetter }]
+    setSamples(nextSamples)
+    if (master) {
+      selectAllDefaultsFor(master, id)
+    }
   }
 
   const removeSample = (id: string) => {
@@ -109,26 +120,31 @@ export function HeatRecordForm({
 
   const save = () => {
     if (!master || !heatCode.trim()) return
-    const requests: HeatReportRequest[] = Object.entries(selectedRequests)
-      .filter(([, selected]) => selected)
-      .map(([key]) => {
-        const [sampleIdRaw, sectionKey] = key.split('::')
-        const sampleId = sampleIdRaw === 'HEAT' ? undefined : sampleIdRaw
-        const section = master.sections.find((s) => s.key === sectionKey)
-        const sample = sampleId ? samples.find((s) => s.id === sampleId) : undefined
-        const existing = initial?.requests?.find(
-          (r) => r.sectionKey === sectionKey && r.sampleId === sampleId,
-        )
-        return {
-          id: existing?.id ?? createId(),
-          sectionKey,
-          sectionName: section?.name ?? sectionKey,
-          department: departmentForSectionKey(sectionKey),
-          sampleId,
-          sampleLabel: sample?.label,
-          status: (existing?.status ?? 'PENDING') as HeatReportRequest['status'],
-        }
+    const requests: HeatReportRequest[] = []
+
+    for (const [key, selected] of Object.entries(selectedRequests)) {
+      if (!selected) continue
+      const [sampleIdRaw, sectionKey] = key.split('::')
+      const sampleId = sampleIdRaw === 'HEAT' ? undefined : sampleIdRaw
+      // If samples exist, ignore any orphan 'HEAT' requests
+      if (samples.length > 0 && sampleId === undefined) continue
+
+      const section = master.sections.find((s) => s.key === sectionKey)
+      const sample = sampleId ? samples.find((s) => s.id === sampleId) : undefined
+      const existing = initial?.requests?.find(
+        (r) => r.sectionKey === sectionKey && r.sampleId === sampleId,
+      )
+      requests.push({
+        id: existing?.id ?? createId(),
+        sectionKey,
+        sectionName: section?.name ?? sectionKey,
+        department: departmentForSectionKey(sectionKey),
+        sampleId,
+        sampleLabel: sample?.label,
+        status: (existing?.status ?? 'PENDING') as HeatReportRequest['status'],
       })
+    }
+
     const base = {
       sapNo: master.sapNo,
       heatCode: heatCode.trim(),
@@ -241,34 +257,40 @@ export function HeatRecordForm({
 
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-base">Heat Samples</CardTitle>
+          <div>
+            <CardTitle className="text-base">Heat Samples</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              If this heat has samples, add them below (Sample A, Sample B, etc.). Department test requests will be configured per sample.
+            </p>
+          </div>
           <Button variant="outline" size="sm" onClick={addSample}>
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-3.5 w-3.5 mr-1" />
             Add Sample
           </Button>
         </CardHeader>
         <CardContent className="space-y-2">
           {samples.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Add sample letters for this heat. Samples are named after the heat code (e.g. A6A-A).
+            <p className="text-sm text-muted-foreground py-2">
+              No sub-samples added. This heat will be treated as a single heat code ({heatCode.trim() || 'Single Heat'}). Click <strong>+ Add Sample</strong> to add Sample A, Sample B, etc.
             </p>
           ) : (
-            samples.map((s) => (
+            samples.map((s, index) => (
               <div key={s.id} className="flex items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground w-16">Sample #{index + 1}:</span>
                 <Input
                   value={s.label}
                   onChange={(e) =>
                     setSamples((arr) => arr.map((x) => (x.id === s.id ? { ...x, label: e.target.value } : x)))
                   }
-                  placeholder="Sample letter"
-                  className="w-40"
+                  placeholder="Sample letter/name (e.g. A)"
+                  className="w-48 font-mono"
                 />
                 <Input
                   value={s.quantity ?? ''}
                   onChange={(e) =>
                     setSamples((arr) => arr.map((x) => (x.id === s.id ? { ...x, quantity: e.target.value || undefined } : x)))
                   }
-                  placeholder="Qty"
+                  placeholder="Qty (optional)"
                   className="w-40"
                 />
                 <Button
@@ -276,6 +298,7 @@ export function HeatRecordForm({
                   size="icon"
                   className="h-8 w-8 text-destructive"
                   onClick={() => removeSample(s.id)}
+                  title="Remove this sample"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -290,29 +313,31 @@ export function HeatRecordForm({
           <CardHeader>
             <CardTitle className="text-base">Department Report Requests</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Choose which departments should submit test reports. Each sample can have different
-              departments. Defaults to all test sections from the product master.
+              Choose which departments should submit test reports for each sample or heat. Defaults to all test sections from the product master.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            <DepartmentRequestGroup
-              key="HEAT"
-              sampleId={undefined}
-              sampleLabel="Heat Code (heat level)"
-              sections={master.sections}
-              selectedRequests={selectedRequests}
-              onToggle={toggleRequest}
-            />
-            {samples.map((s) => (
+            {samples.length === 0 ? (
               <DepartmentRequestGroup
-                key={s.id}
-                sampleId={s.id}
-                sampleLabel={`Sample ${s.label}`}
+                key="HEAT"
+                sampleId={undefined}
+                sampleLabel={heatCode.trim() ? `Heat Code: ${heatCode.trim()}` : 'Single Heat Level'}
                 sections={master.sections}
                 selectedRequests={selectedRequests}
                 onToggle={toggleRequest}
               />
-            ))}
+            ) : (
+              samples.map((s) => (
+                <DepartmentRequestGroup
+                  key={s.id}
+                  sampleId={s.id}
+                  sampleLabel={`Sample ${heatCode.trim() ? `${heatCode.trim()}-` : ''}${s.label}`}
+                  sections={master.sections}
+                  selectedRequests={selectedRequests}
+                  onToggle={toggleRequest}
+                />
+              ))
+            )}
           </CardContent>
         </Card>
       ) : null}
@@ -339,31 +364,38 @@ function DepartmentRequestGroup({
 }: {
   sampleId: string | undefined
   sampleLabel: string
-  sections: ProductMaster['sections']
+  sections: MasterSection[]
   selectedRequests: Record<string, boolean>
   onToggle: (sampleId: string | undefined, sectionKey: string) => void
 }) {
-  const key = (sectionKey: string) => `${sampleId ?? 'HEAT'}::${sectionKey}`
   return (
-    <div className="rounded-md border bg-muted/20 p-3">
-      <p className="mb-2 text-sm font-medium">{sampleLabel}</p>
-      <div className="space-y-1.5">
-        {sections.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No test sections on the product master.</p>
-        ) : (
-          sections.map((s) => (
-            <label key={s.id} className="flex items-center gap-2 text-sm">
+    <div className="rounded-md border p-3">
+      <div className="mb-2 font-mono text-xs font-semibold text-foreground">{sampleLabel}</div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {sections.map((section) => {
+          const key = `${sampleId ?? 'HEAT'}::${section.key}`
+          const checked = selectedRequests[key] ?? false
+          const dept = departmentForSectionKey(section.key)
+          return (
+            <label
+              key={section.id}
+              className={`flex cursor-pointer items-center justify-between rounded border p-2 text-xs transition-colors ${
+                checked ? 'border-primary/50 bg-primary/5 font-medium' : 'bg-muted/30 text-muted-foreground'
+              }`}
+            >
+              <div>
+                <div>{section.name}</div>
+                <div className="text-[10px] text-muted-foreground font-normal">{dept}</div>
+              </div>
               <input
                 type="checkbox"
-                className="h-4 w-4"
-                checked={Boolean(selectedRequests[key(s.key)])}
-                onChange={() => onToggle(sampleId, s.key)}
+                checked={checked}
+                onChange={() => onToggle(sampleId, section.key)}
+                className="h-3.5 w-3.5 accent-primary"
               />
-              <span className="font-medium">{s.name}</span>
-              <span className="text-xs text-muted-foreground">→ {departmentForSectionKey(s.key)}</span>
             </label>
-          ))
-        )}
+          )
+        })}
       </div>
     </div>
   )

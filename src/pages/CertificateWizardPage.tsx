@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Loader2, Search, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Search,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -8,85 +15,64 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { PageHeader } from '@/components/PageHeader'
 import { toast } from 'sonner'
+import { useCertificateStore } from '@/stores/certificateStore'
 import { useProductMasterStore } from '@/stores/productMasterStore'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { useCertificateStore } from '@/stores/certificateStore'
-import { useAuditStore } from '@/stores/auditStore'
-import { useAuthStore } from '@/stores/authStore'
-import { useCertificatesHydrated } from '@/hooks/useHydrated'
-import { suggestCertificateNumber } from '@/lib/certificateNo'
-import { parseReport } from '@/services/parsers'
-import { createId, nowIso } from '@/lib/id'
-import {
-  allRequiredComplete,
-  isReportComplete,
-  reportCardStatus,
-  reportFor,
-  sampleContexts,
-} from '@/lib/certificateStatus'
+import { useProductMastersHydrated, useStoresHydrated } from '@/hooks/useHydrated'
+import { LoadingPage } from '@/components/EmptyState'
 import { ReportWorkspaceStep } from '@/components/certificate-flow/ReportWorkspaceStep'
 import { FinalReviewStep } from '@/components/certificate-flow/FinalReviewStep'
 import { IssueStep } from '@/components/certificate-flow/IssueStep'
-import { ReportStatusBadge } from '@/components/certificate-flow/ReportStatusBadge'
+import { createId, nowIso } from '@/lib/id'
+import { parseReport } from '@/services/parsers'
 import type { CertificateHeatSelection, HeatRecord, ProductMaster, ReportRecord } from '@/types'
 
 export type WizardStepKey = 'sap' | 'heats' | 'reports' | 'review' | 'issue'
 
-export function CertificateWizardPage() {
+export function CertificateWizardPage({ isEdit = false }: { isEdit?: boolean }) {
+  const { id: certIdFromUrl } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const certIdFromQuery = searchParams.get('certId')
+  const certId = certIdFromUrl ?? certIdFromQuery ?? ''
+
   const navigate = useNavigate()
-  const hydrated = useCertificatesHydrated()
+  const hydrated = useStoresHydrated()
+
+  const cert = useCertificateStore((s) => (certId ? s.getCertificate(certId) : undefined))
   const createDraft = useCertificateStore((s) => s.createDraft)
-  const getCertificate = useCertificateStore((s) => s.getCertificate)
   const upsertDraft = useCertificateStore((s) => s.upsertDraft)
   const heatRecords = useHeatRecordStore((s) => s.heatRecords)
-  const addLog = useAuditStore((s) => s.addLog)
-  const user = useAuthStore((s) => s.user)
 
-  const { id: editId } = useParams()
-  const isEdit = Boolean(editId)
-
-  const [certId, setCertId] = useState<string | null>(editId ?? null)
-  const [activeStep, setActiveStep] = useState<WizardStepKey>(isEdit ? 'review' : 'sap')
-  const createdRef = useRef(false)
+  const [activeStep, setActiveStep] = useState<WizardStepKey>('sap')
 
   useEffect(() => {
-    if (!hydrated || createdRef.current) return
-    createdRef.current = true
-    if (editId) {
-      const existing = useCertificateStore.getState().getCertificate(editId)
-      if (existing) {
-        setCertId(existing.id)
-        setActiveStep('review')
-      } else {
-        navigate('/certificates', { replace: true })
-      }
-      return
+    if (!certId && !isEdit) {
+      const store = useCertificateStore.getState()
+      const nextNum = `TC-${new Date().getFullYear()}-${String(store.certificates.length + 1).padStart(6, '0')}`
+      const date = new Date().toLocaleDateString('en-GB').replaceAll('/', '.')
+      const newId = createDraft(nextNum, date)
+      navigate(`/certificates/new?certId=${newId}`, { replace: true })
     }
-    const id = createDraft(
-      suggestCertificateNumber(useCertificateStore.getState().certificates),
-      new Date().toISOString().slice(0, 10),
-    )
-    setCertId(id)
-    addLog({ userId: user?.name ?? 'unknown', action: 'cert_created', entityType: 'CERTIFICATE', after: { id } })
-  }, [hydrated, editId, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [certId, isEdit, createDraft, navigate])
 
-  const cert = certId ? getCertificate(certId) : undefined
+  useEffect(() => {
+    if (cert) {
+      if (cert.status === 'ISSUED') {
+        setActiveStep('issue')
+      } else if (cert.selectedHeats.length > 0) {
+        setActiveStep('heats')
+      } else if (cert.productSnapshot?.sapNo) {
+        setActiveStep('heats')
+      }
+    }
+  }, [cert?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!hydrated || !cert || !certId) {
-    return (
-      <div className="space-y-4">
-        <PageHeader title={isEdit ? 'Edit Certificate' : 'New Certificate'} />
-        <div className="space-y-2">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-6 w-3/4 animate-pulse rounded-md bg-muted" />
-          ))}
-        </div>
-      </div>
-    )
+  if (!hydrated || (!cert && certId)) {
+    return <LoadingPage label="Preparing certificate wizard…" />
   }
 
   const steps: Array<{ key: WizardStepKey; label: string }> = [
-    { key: 'sap', label: 'SAP Search' },
+    { key: 'sap', label: 'Product / SAP' },
     { key: 'heats', label: 'Heat Codes' },
     { key: 'reports', label: 'Reports' },
     { key: 'review', label: 'Final Review' },
@@ -158,82 +144,95 @@ function StepIndicator({
 }: {
   steps: Array<{ key: WizardStepKey; label: string }>
   activeStep: WizardStepKey
-  onJump: (k: WizardStepKey) => void
+  onJump: (step: WizardStepKey) => void
 }) {
-  const activeIdx = steps.findIndex((s) => s.key === activeStep)
+  const currentIdx = steps.findIndex((s) => s.key === activeStep)
+
   return (
-    <Card className="mb-2">
-      <CardContent className="pt-6">
-        <ol className="flex items-center justify-between">
-          {steps.map((step) => {
-            const idx = steps.findIndex((s) => s.key === step.key)
-            const active = idx === activeIdx
-            const complete = idx < activeIdx
-            return (
-              <li key={step.key} className="flex flex-col items-center">
-                <button
-                  type="button"
-                  onClick={() => onJump(step.key)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition-colors ${
-                    active
-                      ? 'bg-primary text-primary-foreground'
-                      : complete
-                        ? 'bg-green-600 text-white hover:bg-green-700'
-                        : 'bg-muted text-muted-foreground hover:bg-accent'
-                  }`}
-                >
-                  {idx + 1}
-                </button>
-                <span className="mt-1 text-xs text-muted-foreground">{step.label}</span>
-              </li>
-            )
-          })}
-        </ol>
-      </CardContent>
-    </Card>
+    <div className="flex items-center justify-between gap-1 overflow-x-auto rounded-lg border bg-muted/30 p-2 text-xs">
+      {steps.map((s, idx) => {
+        const isDone = idx < currentIdx
+        const isCurrent = idx === currentIdx
+        return (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onJump(s.key)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-center font-medium transition-all ${
+              isCurrent
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : isDone
+                  ? 'bg-background text-foreground hover:bg-muted'
+                  : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                isCurrent
+                  ? 'bg-primary-foreground text-primary'
+                  : isDone
+                    ? 'bg-green-600 text-white'
+                    : 'bg-muted text-muted-foreground'
+              }`}
+            >
+              {isDone ? '✓' : idx + 1}
+            </span>
+            <span className="truncate">{s.label}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
-function SapSearchStep({ certId, onNext }: { certId: string; onNext: () => void }) {
+function SapSearchStep({
+  certId,
+  onNext,
+}: {
+  certId: string
+  onNext: () => void
+}) {
+  const masters = useProductMasterStore((s) => s.masters)
   const searchMasters = useProductMasterStore((s) => s.searchMasters)
   const cert = useCertificateStore((s) => (certId ? s.getCertificate(certId) : undefined))
   const setProductSnapshot = useCertificateStore((s) => s.setProductSnapshot)
-  const setSelection = useCertificateStore((s) => s.setSelection)
+  const hydrated = useProductMastersHydrated()
 
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(cert?.productSnapshot?.sapNo ?? '')
   const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<ProductMaster | undefined>(
+    cert?.productSnapshot
+      ? masters.find((m) => m.sapNo.toLowerCase() === cert.productSnapshot.sapNo.toLowerCase())
+      : undefined,
+  )
 
-  const results = useMemo(() => {
-    return searchMasters(query)
-      .filter((m) => m.status === 'ACTIVE')
-      .slice(0, 8)
-  }, [query, searchMasters])
-
-  const selected = cert?.productSnapshot
+  const results = searchMasters(query).filter((m) => m.status === 'ACTIVE').slice(0, 10)
 
   const pick = (m: ProductMaster) => {
-    setProductSnapshot(certId, m)
-    setQuery('')
+    setSelected(m)
+    setQuery(`${m.sapNo} — ${m.partNo} ${m.description}`)
     setOpen(false)
-    // reset any selections from a previous SAP
-    for (const sel of useCertificateStore.getState().getCertificate(certId)?.selectedHeats ?? []) {
-      setSelection(certId, { ...sel, selectedSamples: [], reportRecords: [] })
-    }
+    setProductSnapshot(certId, m)
+    toast.success(`Selected product master ${m.sapNo}`)
   }
 
-  const canNext = Boolean(selected?.sapNo)
+  const canNext = Boolean(cert?.productSnapshot?.sapNo || selected)
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Step 1: Search SAP No.</CardTitle>
+          <CardTitle className="text-base">Step 1: Select SAP Product Master</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Search by SAP No., Part No., Material, Item Description, or Customer. The certificate
+            inherits test parameters and tolerances from this master.
+          </p>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search SAP No., Part No., Item or Customer…"
+              placeholder="Search SAP No., Part No., Description, Customer…"
               className="pl-9"
               value={query}
               onChange={(e) => {
@@ -243,26 +242,15 @@ function SapSearchStep({ certId, onNext }: { certId: string; onNext: () => void 
               onFocus={() => setOpen(true)}
               onBlur={() => setTimeout(() => setOpen(false), 150)}
             />
-            {selected?.sapNo && (
-              <button
-                type="button"
-                onClick={() => {
-                  // keep snapshot but allow re-search
-                  setQuery('')
-                  setOpen(true)
-                }}
-                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
           </div>
 
           {open && (
-            <div className="overflow-hidden rounded-md border bg-popover shadow-md">
+            <div className="max-h-60 overflow-y-auto rounded-md border bg-popover shadow-md">
               {results.length === 0 ? (
                 <div className="px-3 py-2 text-sm text-muted-foreground">
-                  No matching product masters. Import the master workbook first.
+                  {hydrated
+                    ? 'No matching active product masters found.'
+                    : 'Loading product masters…'}
                 </div>
               ) : (
                 results.map((m) => (
@@ -272,10 +260,15 @@ function SapSearchStep({ certId, onNext }: { certId: string; onNext: () => void 
                     className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent"
                     onMouseDown={() => pick(m)}
                   >
-                    <span className="font-mono font-medium">{m.sapNo}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {m.partNo} — {m.description} · {m.customer}
-                    </span>
+                    <div>
+                      <span className="font-mono font-semibold">{m.sapNo}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {m.partNo} · {m.description}
+                      </span>
+                    </div>
+                    <Badge variant="outline" className="text-[10px]">
+                      {m.material}
+                    </Badge>
                   </button>
                 ))
               )}
@@ -330,13 +323,11 @@ export function HeatsStep({
   const [showCreate, setShowCreate] = useState(false)
   const [newCode, setNewCode] = useState('')
   const [newBatch, setNewBatch] = useState('')
-  const [autoFilling, setAutoFilling] = useState<string | null>(null)
   const [expandedHeat, setExpandedHeat] = useState<string | null>(null)
 
   const sapNo = cert?.productSnapshot?.sapNo ?? ''
   const available = heatRecords.filter((h) => h.sapNo.toLowerCase() === sapNo.toLowerCase())
   const selected = cert?.selectedHeats ?? []
-  const sections = cert?.productSnapshot.sections ?? []
 
   const canNext = selected.length > 0
   const allComplete = cert ? allRequiredComplete(cert, heatRecords) : false
@@ -374,16 +365,7 @@ export function HeatsStep({
     if (included) {
       const remaining = sel.selectedSamples.filter((id) => id !== sampleId)
       if (remaining.length === 0) {
-        if (sel.includeHeatLevel === false) {
-          removeHeatSelection(certId, sel.id)
-          return
-        }
-        setSelection(certId, {
-          ...sel,
-          heatCodeOnly: true,
-          selectedSamples: [],
-          reportRecords: sel.reportRecords.filter((r) => r.heatSampleId === undefined),
-        })
+        removeHeatSelection(certId, sel.id)
         return
       }
       setSelection(certId, {
@@ -400,27 +382,6 @@ export function HeatsStep({
       for (const report of buildReportsFromHeat(heat).filter((r) => r.heatSampleId === sampleId)) {
         upsertReport(certId, sel.id, report)
       }
-    }
-  }
-
-  const toggleHeatLevel = (heat: HeatRecord) => {
-    if (!cert) return
-    const sel = selected.find((s) => s.heatRecordId === heat.id)
-    if (!sel) return
-    const includeHeatLevel = sel.includeHeatLevel ?? true
-    if (includeHeatLevel) {
-      if (heat.heats.length === 0) return
-      if (sel.selectedSamples.length === 0) {
-        removeHeatSelection(certId, sel.id)
-        return
-      }
-      setSelection(certId, { ...sel, includeHeatLevel: false })
-    } else {
-      setSelection(certId, {
-        ...sel,
-        includeHeatLevel: true,
-        heatCodeOnly: sel.selectedSamples.length === 0,
-      })
     }
   }
 
@@ -453,12 +414,12 @@ export function HeatsStep({
       heatCode: heat.heatCode,
       batchNo: heat.batchNo,
       heatCodeOnly: heat.heats.length === 0,
-      includeHeatLevel: true,
+      includeHeatLevel: heat.heats.length === 0,
       selectedSamples: heat.heats.map((h) => h.id),
       reportRecords: [],
     }
     addHeatSelection(certId, selection)
-    if (heat.heats.length > 1) setExpandedHeat(heat.id)
+    if (heat.heats.length > 0) setExpandedHeat(heat.id)
 
     for (const report of buildReportsFromHeat(heat)) {
       upsertReport(certId, selection.id, report)
@@ -475,7 +436,6 @@ export function HeatsStep({
     )
 
     if (demoKeys.length > 0) {
-      setAutoFilling(heat.heatCode)
       try {
         for (const sectionKey of demoKeys) {
           const path = heat.demoReports![sectionKey]
@@ -512,8 +472,6 @@ export function HeatsStep({
         }
       } catch (e) {
         console.error(e)
-      } finally {
-        setAutoFilling(null)
       }
     }
   }
@@ -531,7 +489,6 @@ export function HeatsStep({
     setNewCode('')
     setNewBatch('')
     setShowCreate(false)
-    // auto-select it
     const heat = useHeatRecordStore.getState().getHeatRecord(id)
     if (heat) toggleHeat(id)
   }
@@ -576,7 +533,7 @@ export function HeatsStep({
               {available.map((h) => {
                 const sel = selected.find((s) => s.heatRecordId === h.id)
                 const isSel = Boolean(sel)
-                const multi = h.heats.length > 1
+                const multi = h.heats.length > 0
                 const expanded = expandedHeat === h.id
                 return (
                   <div
@@ -608,75 +565,57 @@ export function HeatsStep({
                           </button>
                           <div className="text-xs text-muted-foreground">
                             {h.batchNo ? `Batch ${h.batchNo} · ` : ''}
-                            {multi ? `${h.heats.length} samples` : h.heats.length === 1 ? '1 sample' : 'No samples (Heat Code Only)'}
+                            {multi ? `${h.heats.length} sample(s)` : 'Single Heat'}
                           </div>
                         </div>
                       </div>
                       {isSel ? (
                         <Badge variant="secondary">
-                          {sel?.heatCodeOnly ? 'Heat Code Only' : `${sel?.selectedSamples.length ?? 0}/${h.heats.length} sample(s)`}
+                          {h.heats.length === 0
+                            ? 'Single Heat'
+                            : `${sel?.selectedSamples.length ?? 0}/${h.heats.length} sample(s)`}
                         </Badge>
                       ) : null}
                     </div>
 
-                    {expanded ? (
+                    {expanded && multi ? (
                       <div className="mt-2 space-y-1.5 border-t pt-2 pl-11">
-                        <div className="flex items-center justify-between gap-3 text-sm">
-                          <label className="flex items-center gap-2">
-                            <Checkbox
-                              checked={isSel ? (sel?.includeHeatLevel ?? true) : false}
-                              disabled={!isSel || h.heats.length === 0}
-                              onCheckedChange={() => isSel && toggleHeatLevel(h)}
-                            />
-                            <span className="font-mono text-xs">Main Heat Level</span>
-                            {h.heats.length === 0 ? (
-                              <span className="text-xs text-muted-foreground">· only</span>
-                            ) : null}
-                          </label>
-                          {isSel && (sel?.includeHeatLevel ?? true) ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-                          ) : isSel ? (
-                            <span className="text-xs text-muted-foreground">not included</span>
-                          ) : null}
-                        </div>
-                        {h.heats.length === 0 ? (
-                          <p className="text-xs text-muted-foreground">No samples linked to this heat code.</p>
-                        ) : (
-                          <>
-                            {h.heats.map((s) => {
-                              const checked = Boolean(sel?.selectedSamples.includes(s.id))
-                              return (
-                                <div key={s.id} className="flex items-center justify-between gap-3 text-sm">
-                                  <label className="flex items-center gap-2">
-                                    <Checkbox
-                                      checked={checked}
-                                      disabled={!isSel}
-                                      onCheckedChange={() => isSel && toggleSample(h, s.id)}
-                                    />
-                                    <span className="font-mono text-xs">{h.heatCode}-{s.label}</span>
-                                    {s.quantity ? <span className="text-xs text-muted-foreground">· {s.quantity}</span> : null}
-                                  </label>
-                                  {isSel && checked ? (
-                                    <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
-                                  ) : isSel ? (
-                                    <span className="text-xs text-muted-foreground">not included</span>
-                                  ) : (
-                                    <span className="text-xs text-muted-foreground">add heat to choose samples</span>
-                                  )}
-                                </div>
-                              )
-                            })}
-                            {isSel && h.heats.length > 1 ? (
+                        <div className="space-y-1">
+                          {h.heats.map((s) => {
+                            const checked = Boolean(sel?.selectedSamples.includes(s.id))
+                            return (
+                              <div key={s.id} className="flex items-center justify-between gap-3 text-sm">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <Checkbox
+                                    checked={checked}
+                                    disabled={!isSel}
+                                    onCheckedChange={() => isSel && toggleSample(h, s.id)}
+                                  />
+                                  <span className="font-mono text-xs">Sample {h.heatCode}-{s.label}</span>
+                                  {s.quantity ? <span className="text-xs text-muted-foreground">· Qty: {s.quantity}</span> : null}
+                                </label>
+                                {isSel && checked ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                                ) : isSel ? (
+                                  <span className="text-xs text-muted-foreground">not included</span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">add heat to choose samples</span>
+                                )}
+                              </div>
+                            )
+                          })}
+                          {isSel && h.heats.length > 1 ? (
+                            <div className="pt-1">
                               <button
                                 type="button"
-                                className="text-xs text-primary hover:underline"
+                                className="text-xs text-primary hover:underline font-medium"
                                 onClick={() => selectAllSamples(h)}
                               >
-                                Select all samples
+                                Select all {h.heats.length} samples
                               </button>
-                            ) : null}
-                          </>
-                        )}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -684,165 +623,43 @@ export function HeatsStep({
               })}
             </div>
           )}
-
-          {autoFilling ? (
-            <div className="flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-900/20">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading stored report data for heat {autoFilling}…
-            </div>
-          ) : null}
-
-          {selected.length > 0 ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
-                <span className="text-sm font-medium">Selected</span>
-                <span className="text-xs text-muted-foreground">
-                  {selected.length} heat code(s) ·{' '}
-                  {selected.reduce((n, s) => n + s.selectedSamples.length, 0)} sample(s)
-                </span>
-                <div className="ml-auto flex flex-wrap gap-1.5">
-                  {selected.map((sel) => (
-                    <button
-                      key={sel.id}
-                      type="button"
-                      title={`Remove ${sel.heatCode}`}
-                      className="flex items-center gap-1 rounded-full border bg-background px-2.5 py-0.5 text-xs hover:border-destructive/60"
-                      onClick={() => toggleHeat(sel.heatRecordId)}
-                    >
-                      <span className="font-mono font-medium">{sel.heatCode}</span>
-                      <span className="text-muted-foreground">
-                        {sel.heatCodeOnly ? 'Heat Code Only' : `${sel.selectedSamples.length} sample(s)`}
-                      </span>
-                      <X className="h-3 w-3" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {selected.map((sel) => {
-                  const heat = heatRecords.find((r) => r.id === sel.heatRecordId)
-                  const contexts = sampleContexts(sel, heatRecords)
-                  const requiredSections = sections.filter((s) => s.required && s.parameters.length > 0)
-                  const overallComplete = requiredSections.every((section) =>
-                    contexts.every((ctx) =>
-                      isReportComplete(reportFor(sel, section.key, ctx.sampleId), section),
-                    ),
-                  )
-                  return (
-                    <div key={sel.id} className="rounded-md border bg-background">
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-semibold">{sel.heatCode}</span>
-                          {sel.batchNo ? <Badge variant="outline">Batch {sel.batchNo}</Badge> : null}
-                          <Badge variant={sel.heatCodeOnly ? 'secondary' : 'default'}>
-                            {sel.heatCodeOnly ? 'Heat Code Only' : `${sel.selectedSamples.length} sample(s)`}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {overallComplete ? (
-                            <Badge className="bg-green-600 text-white">
-                              <CheckCircle2 className="mr-1 h-3 w-3" />
-                              Complete
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Pending</Badge>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title={`Remove ${sel.heatCode}`}
-                            onClick={() => toggleHeat(sel.heatRecordId)}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-                        {contexts.map((ctx) => {
-                          const sample = heat?.heats.find((s) => s.id === ctx.sampleId)
-                          const sampleComplete =
-                            !sel.heatCodeOnly &&
-                            requiredSections.every((section) =>
-                              isReportComplete(reportFor(sel, section.key, ctx.sampleId), section),
-                            )
-                          return (
-                            <div key={ctx.sampleId ?? 'heat-only'} className="flex flex-col rounded-md border">
-                              <div className="flex items-center justify-between border-b bg-muted/40 px-2.5 py-1.5">
-                                <span className="font-mono text-xs font-medium">
-                                  {ctx.sampleId ? `Sample ${sel.heatCode}-${ctx.label}` : 'Heat Code Only'}
-                                  {sample?.quantity ? (
-                                    <span className="ml-1 font-normal text-muted-foreground">· {sample.quantity}</span>
-                                  ) : null}
-                                </span>
-                                {sampleComplete ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600" /> : null}
-                              </div>
-                              <div className="flex-1 space-y-2.5 p-2.5">
-                                {requiredSections.length === 0 ? (
-                                  <p className="text-xs text-muted-foreground">No required sections.</p>
-                                ) : (
-                                  requiredSections.map((section) => {
-                                    const report = reportFor(sel, section.key, ctx.sampleId)
-                                    const status = reportCardStatus(report, section)
-                                    return (
-                                      <div key={section.id}>
-                                        <div className="flex items-center justify-between gap-2">
-                                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                            {section.name}
-                                          </p>
-                                          <ReportStatusBadge value={status} />
-                                        </div>
-                                        {report && report.parsedValues.length > 0 ? (
-                                          <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5">
-                                            {report.parsedValues.map((pv) => (
-                                              <div
-                                                key={`${report.id}-${pv.name}`}
-                                                className="flex items-baseline justify-between gap-2 text-xs"
-                                              >
-                                                <dt className="truncate text-muted-foreground">{pv.name}</dt>
-                                                <dd className="font-mono font-medium">
-                                                  {pv.value}
-                                                  {pv.unit ? ` ${pv.unit}` : ''}
-                                                </dd>
-                                              </div>
-                                            ))}
-                                          </dl>
-                                        ) : (
-                                          <p className="mt-1 text-xs text-muted-foreground">no data</p>
-                                        )}
-                                      </div>
-                                    )
-                                  })
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          ) : null}
         </CardContent>
       </Card>
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
-          Back
+          Back: Product / SAP
         </Button>
-        <Button
-          onClick={() => (allComplete ? onAutoFill?.() : onNext())}
-          disabled={!canNext}
-        >
-          {allComplete ? 'Next: Final Review' : 'Next: Reports'}
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-2">
+          {allComplete && onAutoFill && (
+            <Button variant="secondary" onClick={onAutoFill}>
+              Skip to Review (All Complete)
+            </Button>
+          )}
+          <Button onClick={onNext} disabled={!canNext}>
+            Next: Reports Workspace
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   )
+}
+
+function allRequiredComplete(
+  cert: { productSnapshot: ProductMaster; selectedHeats: CertificateHeatSelection[] },
+  heatRecords: HeatRecord[],
+): boolean {
+  const reqSections = cert.productSnapshot.sections.filter((s) => s.required)
+  if (reqSections.length === 0 || cert.selectedHeats.length === 0) return false
+  for (const sel of cert.selectedHeats) {
+    const heat = heatRecords.find((h) => h.id === sel.heatRecordId)
+    if (!heat) return false
+    for (const s of reqSections) {
+      const hasReport = (heat.reports ?? []).some((r) => r.sectionKey === s.key && r.confirmed)
+      const hasDemo = Boolean(heat.demoReports?.[s.key])
+      if (!hasReport && !hasDemo) return false
+    }
+  }
+  return true
 }
