@@ -93,13 +93,6 @@ const CHEMICAL_FILES: FixtureMap = {
   'GZ-1026 H CASTING': { sap: DEMO_SAP, heat: 'GZ-1026' },
 }
 
-const CHEMICAL_VALUES: Record<string, ParsedValue[]> = {
-  'GZ-319': CHEM_GZ319,
-  'GZ-56': CHEM_GZ56,
-  'GZ-530': CHEM_GZ530,
-  'GZ-1026': CHEM_GZ1026,
-}
-
 const TENSILE_FILES: FixtureMap = {
   'G6E-A RS12 7005': { sap: DEMO_SAP, heat: 'G6E-A' },
   'GZ-56 P-COVER': { sap: DEMO_SAP, heat: 'GZ-56' },

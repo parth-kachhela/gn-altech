@@ -1,69 +1,96 @@
-# GN ALTECH Test Certificate Generator
+# GN ALTECH Test Certificate Platform
 
-A complete frontend demo for generating industrial **Test Certificates** (chemical analysis, mechanical properties and micro structure) for castings, matching the reference certificate layout in `04_Expected_Generated_Test_Certificate.pdf`.
+Industrial **Test Certificate Generation & Lab Workflow System** for castings and foundries, designed for GN ALTECH. Aggregates laboratory test reports (Chemical Analysis, Mechanical/Tensile Properties, Hardness, and Micro Structure), validates measured values against Product Master specification rules, and generates official A4 landscape Test Certificates (PDF) and customer Excel summaries.
 
-Stack: **React 19 + Vite 8 + TypeScript (strict) + Tailwind CSS v4 + shadcn/ui (Radix)**. Runs fully in the browser (demo mode, no backend) — data is persisted via `localStorage` (zustand) and `idb-keyval`.
+Stack: **React 19 + Vite 8 + TypeScript (strict) + Tailwind CSS v4 + shadcn/ui (Radix) + Express / Prisma / PostgreSQL Backend**.
 
-## Getting started
+---
+
+## Getting Started
+
+### 1. Backend Service
 
 ```bash
+cd gn-altech-backend
 npm install
-npm run dev        # start dev server
-npm run build      # type-check (tsc -b) + production build
-npm run lint       # oxlint
+npx prisma generate
+# When connecting to PostgreSQL:
+# npx prisma migrate deploy
+# npm run seed
+npm run dev        # Starts backend on http://localhost:4000
 ```
 
-Open the printed URL (e.g. `http://localhost:5173`). Log in with the demo credentials shown on the login page.
+### 2. Frontend Application
 
-## How it works
+```bash
+cd gn-altech
+npm install
+npm run dev        # Starts frontend on http://localhost:5173
+npm run build      # Type-check (tsc -b) + production build
+npm run lint       # oxlint check
+```
 
-- **No backend** — everything runs client-side. A demo dataset is seeded on first login.
-- **Heat numbers are manual** — the app never auto-generates a heat number. Duplicates are detected only against `Daily Heat No.`
-- **Report types** (exact names): `Chemical Analysis`, `Mechanical Properties`, `Micro Structure`
-- **Upload → Parse → Review → Preview** workflow:
-  1. Upload the three lab PDF reports for a certificate (drag & drop).
-  2. Text is extracted with pdfjs-dist and parsed (`KEY=VALUE` machine-readable lines first, then a human-table fallback).
-  3. Common fields and test rows are confirmed/edited in the Review screen.
-  4. The certificate preview is a real generated PDF (A4 landscape, via `@react-pdf/renderer`).
-  5. Download as PDF or multi-sheet Excel (`.xlsx`).
+---
 
-## 14-step acceptance demo
+## Core Architecture & Workflow
 
-1. **Login** — `demo` / `demo123` (any non-empty credentials also work; user is persisted).
-2. **Dashboard** — verify seeded summary cards (heat records, certificates, pass/fail) load after hydration.
-3. **Load the A6A demo** — sidebar → **Load A6A Demo Reports** → opens certificate `TC-2026-000184` with the 3 embedded reports.
-4. **Upload reports** — open `TC-2026-000184` → **Upload Reports** → use **Load A6A Demo Reports** (bundled PDFs) or drag the files from `public/demo/`. Watch parsing progress.
-5. **Review common data** — confirm `Apex Engineering Private Limited`, `Ductile Iron Pump Housing`, `PH-801`, `801 Nos.`, Daily `A6A`, Monthly `AY-001`, Yearly `2026`, Batch `B-0726-04`, Invoice `INV-2026-0814`, Delivery `As Cast`.
-6. **Review test values** — confirm chemical (C 3.070, Si 1.700, Mn 0.742, P 0.057, S 0.080, Cr 0.320, Mg 0.045, Cu 0.576, Sn 0.046, Mo 0.000), mechanical (YS 320, UTS 520, Elong 8.5 %, Hardness 238 BHN), micro (Nodularity 85 %, Nodule 180/mm², Pearlite 40, Ferrite 60, Carbide NIL), all `PASS`.
-7. **Edit a value** — change e.g. a chemical observed value; the row result and overall result recompute.
-8. **Preview** — Preview page renders the real A4 landscape PDF: company header, TEST CERTIFICATE, Format/Rev, 4 header rows, parts table, grouped chemical columns, `Elongation % / Hardness BHN → >= 7 / 180-250` and `8.5 / 238`, `Pearlite / Ferrite → 30-50 / 50-70` and `40 / 60`, Carbide `NIL`, Additional Tests + Authorization, Remarks.
-9. **Download PDF** — `TC-2026-000184_Apex-Engineering-Private-Limited.pdf`.
-10. **Download Excel** — multi-sheet workbook (Certificate / Parts / Chemical / Mechanical / Micro Structure / Additional Tests / Remarks).
-11. **Create a certificate from a heat record** — Heat Records → A6A → **Use in Certificate** → form pre-filled, heat marked `USED`, new number `TC-2026-000185` suggested.
-12. **Duplicate heat check** — creating another certificate with Daily Heat No. `A6A` is blocked.
-13. **Persistence** — refresh any page: data survives; hydration-safe routing means no “Not Found” on direct/refresh navigation.
-14. **Issue certificate** — detail page → **Issue** → status becomes `ISSUED` with timestamp.
+- **Product Master Centric**: Specifications (SAP No, Part No, Customer, Grade, Material) define the required test sections and acceptable parameter ranges (Min, Max, Expected).
+- **Manual Heat Numbers**: Heat codes and daily/monthly/yearly heat identifiers are entered manually per factory practice; duplicates are rejected.
+- **Four Lab Report Sections**:
+  1. `Chemical Analysis` (Spectrometer analysis: C, Si, Mn, P, S, Cr, Mg, Cu, Sn, Mo, Fe, etc.)
+  2. `Tensile / Mechanical Properties` (UTS, 0.2% Yield Limit, Elongation %, Force, Displacement)
+  3. `Hardness` (Multi-point BHN readings and calculated average)
+  4. `Micro Structure` (Nodularity %, Nodule Count, Pearlite %, Ferrite %, Carbide)
+- **Role-Based Access Control**:
+  - `SUPER_ADMIN`: Full system access, Product Master import, User management, Issue certificates.
+  - `QA_ADMIN`: Full certificate lifecycle, value review & confirmation, heat management.
+  - `DEPARTMENT_UPLOADER`: Assigned lab inbox, report file uploads and parsing review.
 
-## Demo data
+---
 
-- `src/data/heatRecords.ts` — 20 heat records (includes `A6A`)
-- `src/data/certificates.ts` — 10 certificates; `TC-2026-000184` (`A6A`) embeds the 3 parsed reports and drives “Reset to Demo Data”
-- `public/demo/` — the three lab PDFs + the expected reference certificate
+## 14-Step Acceptance Demo
 
-## Project structure
+1. **Login & RBAC** — Log in with `superadmin` / `Admin@123` (or demo role accounts `chemical`, `tensile`, `micro`, `hardness`).
+2. **Dashboard Overview** — View live summary cards: Total Heats, Heats Ready for Certificate, Pending Lab Reports, and Issued Certificates.
+3. **Import Product Master** — Navigate to **Product Masters** → **Import Master** → Upload `Master.xlsx` (or `GN_Altech_Demo_Master.xlsx`) to populate SAP numbers, grades, and parameter limits.
+4. **Create Heat Record** — Navigate to **Heat Records** → **New Heat Record** → Select SAP `PR01CI0459CA`, enter Heat Code `GZ-56`, Batch `B-0726-04`, Quantity `801 Nos.`.
+5. **Department Requests** — Create test requests for Chemical, Tensile, Hardness, and Micro departments.
+6. **Chemical Lab Report Upload** — Upload `01.Chemical data/03. GZ-56 P COVER.pdf` → System parses spectrometer channels (C 3.06%, Si 1.83%, Mn 0.79%, P 0.049%, S 0.088%, Cu 0.472%).
+7. **Tensile Lab Report Upload** — Upload `03.Tensile data/03. GZ-56 P-COVER.pdf` → System extracts UTS `253.9 N/mm²`, Elongation `10.0%`, Force `12860 N`.
+8. **Hardness Lab Report Upload** — Upload `04.Hardness data/03. P. Cover 934 (GZ-56).pdf` → System reads multi-indentation BHN readings (`202`, `201`, `204`, `211`...) and computes average `205 BHN`.
+9. **Micro Structure Lab Ingest** — Upload `02.Micro data/03. GZ-56 P COVER.bmp` → Microstructure image attached; enter confirmed Nodularity (`85%`), Pearlite (`40%`), Ferrite (`60%`), Carbide (`NIL`).
+10. **Specification Validation & Review** — Review observed values against master specifications; verify automatic calculation of parameter `PASS`/`FAIL` and overall Section status.
+11. **Create Certificate from Heat** — From Heat Records or Certificate Wizard, select completed heat `GZ-56` → System pre-fills product snapshot, generates unique sequence `TC-2026-000184`.
+12. **Certificate Preview** — Inspect real-time A4 landscape PDF preview: GN ALTECH header, format & rev metadata, part details, grouped chemical table, mechanical/micro test blocks, and authorization signatures.
+13. **Issue Certificate** — Click **Issue Certificate** → Certificate locks with issuer identity, timestamp, and status `ISSUED`.
+14. **Export Deliverables** — Download final A4 Landscape PDF (`TC-2026-000184.pdf`) and multi-sheet customer Excel report (`TC-2026-000184.xlsx`).
+
+---
+
+## Project Structure
 
 ```
-src/
-  components/
-    pdf/TestCertificateDocument.tsx   # A4 landscape certificate model (preview + download)
-    certificates/                    # form, table, detail, upload card, editors
-    heat-records/                    # form, table
-    layout/                          # AppLayout, Sidebar, TopBar
-    ui/                              # shadcn/ui components
-  data/                              # demo seed data
-  lib/                               # utils, factories, result calc, ids
-  pages/                             # all routes
-  services/                          # pdfExtract, reportParser, reportMerge, certificatePdf, excelExport
-  stores/                            # zustand stores (settings, theme, auth, heat records, certificates)
-  types/                             # domain types
+gn-altech/
+├── src/
+│   ├── components/
+│   │   ├── certificate-flow/        # Report cards, parsed review dialog, final review, issue step
+│   │   ├── certificates/            # Certificate list, detail, and preview views
+│   │   ├── heat-records/            # Heat form, tables, and sample management
+│   │   ├── master/                  # Product master editor dialogs and parameter editors
+│   │   ├── pdf/                     # TestCertificateDocument.tsx (A4 landscape PDF renderer)
+│   │   ├── layout/                  # AppLayout, Sidebar, TopBar, Navigation
+│   │   └── ui/                      # Radix / shadcn/ui components
+│   ├── data/                        # Demo fixtures and lab manifests
+│   ├── lib/                         # Validation, spec parser, numeric utils, permissions
+│   ├── pages/                       # Dashboard, Heats, Masters, Certificates, Dept Inboxes
+│   ├── services/                    # PDF/Excel generation, lab report parsers, API client
+│   ├── stores/                      # Zustand state management (masters, heats, certs, auth)
+│   └── types/                       # Core TypeScript domain models
+gn-altech-backend/
+├── prisma/                          # Schema (User, ProductMaster, Heat, Certificate, AuditLog)
+└── src/
+    ├── middleware/                  # JWT auth, RBAC permissions, error handling
+    ├── parse/                       # Server-side report parser fallback
+    ├── routes/                      # /auth, /users, /masters, /heats, /certificates, /dashboard
+    └── services/                    # File storage and persistence
 ```

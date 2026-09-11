@@ -22,11 +22,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const token = (() => {
     try { return sessionStorage.getItem('gn-alt-server-token') ?? '' } catch { return '' }
   })()
+  const isMultipart = init?.body instanceof FormData
   const res = await fetch(`${base}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers ?? {}) },
+    headers: {
+      ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   })
-  if (!res.ok) throw new Error(`Server ${res.status}`)
+  if (!res.ok) {
+    let msg = `Server ${res.status}`
+    try {
+      const err = await res.json()
+      if (err?.error) msg = err.error
+    } catch { /* ignore */ }
+    throw new Error(msg)
+  }
   return res.json() as Promise<T>
 }
 
@@ -39,8 +51,73 @@ export const api = {
     try { sessionStorage.setItem('gn-alt-server-token', out.token) } catch { /* ignore */ }
     return out
   },
-  listHeats: () => req<unknown[]>('/api/heats'),
-  listMasters: () => req<unknown[]>('/api/masters'),
+  logout: () => {
+    try { sessionStorage.removeItem('gn-alt-server-token') } catch { /* ignore */ }
+  },
+
+  // Dashboard
+  getDashboard: () => req<{
+    totalHeats: number
+    readyHeats: number
+    pendingHeats: number
+    issuedCertificates: number
+    departmentStats: Record<string, { total: number; pending: number; reviewed: number }>
+  }>('/api/dashboard'),
+
+  // Product Masters
+  listMasters: (params?: { page?: number; limit?: number; q?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.page) q.set('page', String(params.page))
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.q) q.set('q', params.q)
+    const qs = q.toString() ? `?${q.toString()}` : ''
+    return req<{ total: number; page: number; limit: number; items: unknown[] }>(`/api/masters${qs}`)
+  },
+  getMaster: (id: string) => req<unknown>(`/api/masters/${id}`),
+  createMaster: (data: unknown) => req<unknown>('/api/masters', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaster: (id: string, data: unknown) => req<unknown>(`/api/masters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Heats
+  listHeats: (params?: { page?: number; limit?: number; q?: string; status?: 'ready' | 'pending' }) => {
+    const q = new URLSearchParams()
+    if (params?.page) q.set('page', String(params.page))
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.q) q.set('q', params.q)
+    if (params?.status) q.set('status', params.status)
+    const qs = q.toString() ? `?${q.toString()}` : ''
+    return req<{ total: number; page: number; limit: number; items: unknown[] }>(`/api/heats${qs}`)
+  },
+  getHeat: (id: string) => req<unknown>(`/api/heats/${id}`),
+  createHeat: (data: { sapNo: string; heatCode: string; batchNo?: string; quantity?: string; date?: string }) =>
+    req<unknown>('/api/heats', { method: 'POST', body: JSON.stringify(data) }),
+  updateHeat: (id: string, data: { sapNo?: string; batchNo?: string; quantity?: string; status?: string; version?: number }) =>
+    req<unknown>(`/api/heats/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  uploadHeatReport: (heatId: string, file: File, sectionKey: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('sectionKey', sectionKey)
+    return req<unknown>(`/api/heats/${heatId}/reports`, { method: 'POST', body: fd })
+  },
+  bulkUploadReports: (files: File[], sectionKey: string) => {
+    const fd = new FormData()
+    files.forEach((f) => fd.append('files', f))
+    fd.append('sectionKey', sectionKey)
+    return req<{ results: unknown[] }>('/api/heats/bulk-reports', { method: 'POST', body: fd })
+  },
+
+  // Certificates
+  listCertificates: (params?: { page?: number; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.page) q.set('page', String(params.page))
+    if (params?.limit) q.set('limit', String(params.limit))
+    const qs = q.toString() ? `?${q.toString()}` : ''
+    return req<{ total: number; page: number; limit: number; items: unknown[] }>(`/api/certificates${qs}`)
+  },
+  createCertificateFromHeat: (heatId: string) =>
+    req<unknown>(`/api/certificates/from-heat/${heatId}`, { method: 'POST' }),
+
+  // Users
+  listUsers: () => req<unknown[]>('/api/users'),
 }
 
 export function useServerHealth() {
