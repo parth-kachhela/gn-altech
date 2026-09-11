@@ -59,9 +59,17 @@ export function ChemicalBulkUploadPage() {
     const list = Array.from(files)
     if (list.length === 0) return
     const fresh: IngestItem[] = list.map((f, i) => ({
-      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`, file: f, progress: 0, status: 'QUEUED',
-      queueLabel: 'Waiting in queue', sapCode: '', heatCode: '', confidence: 0,
-      message: 'Waiting in queue…', values: [], valueSource: {},
+      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+      file: f,
+      progress: 0,
+      status: 'QUEUED',
+      queueLabel: 'Waiting in queue',
+      sapCode: '',
+      heatCode: '',
+      confidence: 0,
+      message: 'Waiting in queue…',
+      values: [],
+      valueSource: {},
     }))
     setItems((arr) => [...arr, ...fresh])
     // Let state settle, then drain the queue (new + previously failed/queued).
@@ -71,7 +79,7 @@ export function ChemicalBulkUploadPage() {
         .map((i) => i.id)]
       if (pending.length > 0) void runQueue(pending)
     }, 50)
-    toast.success(`${list.length} file(s) queued — processing one by one (~10s each)`)
+    toast.success(`${list.length} file(s) queued — processing one by one`)
   }
 
   const retryOne = (id: string) => {
@@ -79,41 +87,114 @@ export function ChemicalBulkUploadPage() {
     setTimeout(() => { void runQueue([id]) }, 50)
   }
 
-  const submitAll = async () => {
-    const valid = itemsRef.current.filter((i) => i.sapCode && i.heatCode && (i.status === 'MATCHED' || i.status === 'REVIEW_REQUIRED'))
-    if (valid.length === 0) { toast.error('Confirm SAP Code and Heat Code for at least one processed record'); return }
+  const submitSingleReport = (itemToSubmit: IngestItem) => {
+    if (!itemToSubmit.sapCode || !itemToSubmit.heatCode) {
+      toast.error('Confirm SAP Code and Heat Code before submitting.')
+      return
+    }
     setSubmitting(true)
     try {
-      // Group by (SAP, heat). Unique group = heat-level report.
-      // Repeats sharing SAP + heat: Report 1 -> Sample A, Report 2 -> B, …
+      const now = nowIso()
+      const st = useHeatRecordStore.getState()
+      const sapNo = itemToSubmit.sapCode.toUpperCase()
+      const heatCode = itemToSubmit.heatCode.toUpperCase()
+      const existing = st.heatRecords.find(
+        (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() && h.sapNo.toLowerCase() === sapNo.toLowerCase(),
+      )
+
+      const storedKey = `chem-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      void saveReportBlob(storedKey, itemToSubmit.file).catch(() => {})
+
+      const makeReport = () => ({
+        id: createId(),
+        sectionKey: 'CHEMICAL',
+        sectionName: NAMES.CHEMICAL,
+        parsedValues: itemToSubmit.values,
+        confirmed: true,
+        warnings: itemToSubmit.result?.warnings ?? [],
+        fileMetadata: { fileName: itemToSubmit.file.name, fileSize: itemToSubmit.file.size, mimeType: itemToSubmit.file.type, storedKey },
+        uploadedBy: user?.name,
+        uploadedAt: now,
+        status: 'COMPLETE' as const,
+      })
+
+      if (existing) {
+        const r0 = makeReport()
+        st.upsertReportData(existing.id, r0)
+        st.confirmReportData(existing.id, r0.id, itemToSubmit.values)
+      } else {
+        const id = st.addHeatRecord({ sapNo, heatCode, heats: [], demoReports: {} })
+        useHeatRecordStore.setState((prev) => ({
+          heatRecords: prev.heatRecords.map((h) =>
+            h.id === id
+              ? {
+                  ...h,
+                  reports: [makeReport()],
+                  requests: FOUR.map((k) => ({
+                    id: createId(),
+                    sectionKey: k,
+                    sectionName: NAMES[k],
+                    department: departmentForSectionKey(k),
+                    status: k === 'CHEMICAL' ? ('REVIEWED' as const) : ('PENDING' as const),
+                  })),
+                }
+              : h,
+          ),
+        }))
+      }
+
+      addLog({
+        userId: user?.name ?? 'chemical',
+        action: 'chemical_submitted',
+        entityType: 'HEAT_RECORD',
+        after: { heatCode, fileName: itemToSubmit.file.name },
+      })
+      toast.success(`Heat ${heatCode} chemical report saved — lab departments notified!`)
+      setItems((arr) => arr.filter((i) => i.id !== itemToSubmit.id))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const submitAll = async () => {
+    const valid = itemsRef.current.filter((i) => i.sapCode && i.heatCode && (i.status === 'MATCHED' || i.status === 'REVIEW_REQUIRED'))
+    if (valid.length === 0) {
+      toast.error('Confirm SAP Code and Heat Code for at least one processed record')
+      return
+    }
+    setSubmitting(true)
+    try {
       const groups = groupBySapHeat(valid, (i) => i.sapCode, (i) => i.heatCode)
       let reportsWritten = 0
       for (const [, group] of groups) {
         const now = nowIso()
-        // Fresh lookup each iteration (store snapshot goes stale as we add heats)
         const st = useHeatRecordStore.getState()
         const head = group[0]
         const sapNo = head.sapCode.toUpperCase()
         const heatCode = head.heatCode.toUpperCase()
-        // Same heat under a different SAP is a different heat — match both.
         const existing = st.heatRecords.find(
           (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() && h.sapNo.toLowerCase() === sapNo.toLowerCase(),
         )
 
         const makeReport = (it: IngestItem, sampleId?: string, sampleLabel?: string) => {
           const storedKey = `chem-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-          void saveReportBlob(storedKey, it.file).catch(() => { /* ignore */ })
+          void saveReportBlob(storedKey, it.file).catch(() => {})
           return {
-            id: createId(), sectionKey: 'CHEMICAL', sectionName: NAMES.CHEMICAL,
+            id: createId(),
+            sectionKey: 'CHEMICAL',
+            sectionName: NAMES.CHEMICAL,
             ...(sampleId ? { sampleId, sampleLabel } : {}),
-            parsedValues: it.values, confirmed: true, warnings: it.result?.warnings ?? [],
+            parsedValues: it.values,
+            confirmed: true,
+            warnings: it.result?.warnings ?? [],
             fileMetadata: { fileName: it.file.name, fileSize: it.file.size, mimeType: it.file.type, storedKey },
-            uploadedBy: user?.name, uploadedAt: now, status: 'COMPLETE' as const,
+            uploadedBy: user?.name,
+            uploadedAt: now,
+            status: 'COMPLETE' as const,
           }
         }
 
         const attachAsSamples = (heatId: string, taken: string[]) => {
-          // Reuse the previewed letters so review == saved.
           const labels = resolveGroupLabels(group, taken)
           const newSamples = labels.map((label) => ({ id: createId(), label, quantity: undefined }))
           const cur = useHeatRecordStore.getState().heatRecords.find((h) => h.id === heatId)!
@@ -130,13 +211,11 @@ export function ChemicalBulkUploadPage() {
 
         if (existing) {
           if (group.length === 1) {
-            // Unique report -> heat level
             const r0 = makeReport(head)
             st.upsertReportData(existing.id, r0)
             st.confirmReportData(existing.id, r0.id, head.values)
             reportsWritten++
           } else {
-            // Repeats -> every report becomes a sample (A, B, C…)
             const fresh = useHeatRecordStore.getState().heatRecords.find((h) => h.id === existing.id)!
             attachAsSamples(existing.id, fresh.heats.map((s) => s.label))
           }
@@ -146,9 +225,12 @@ export function ChemicalBulkUploadPage() {
             heatRecords: prev.heatRecords.map((h) =>
               h.id === id
                 ? {
-                    ...h, reports: [makeReport(head)],
+                    ...h,
+                    reports: [makeReport(head)],
                     requests: FOUR.map((k) => ({
-                      id: createId(), sectionKey: k, sectionName: NAMES[k],
+                      id: createId(),
+                      sectionKey: k,
+                      sectionName: NAMES[k],
                       department: departmentForSectionKey(k),
                       status: k === 'CHEMICAL' ? ('REVIEWED' as const) : ('PENDING' as const),
                     })),
@@ -159,14 +241,15 @@ export function ChemicalBulkUploadPage() {
           reportsWritten++
         } else {
           const id = st.addHeatRecord({ sapNo, heatCode, heats: [], demoReports: {} })
-          // Create heat-level requests first, then attach all reports as samples.
           useHeatRecordStore.setState((prev) => ({
             heatRecords: prev.heatRecords.map((h) =>
               h.id === id
                 ? {
                     ...h,
                     requests: FOUR.map((k) => ({
-                      id: createId(), sectionKey: k, sectionName: NAMES[k],
+                      id: createId(),
+                      sectionKey: k,
+                      sectionName: NAMES[k],
                       department: departmentForSectionKey(k),
                       status: k === 'CHEMICAL' ? ('REVIEWED' as const) : ('PENDING' as const),
                     })),
@@ -177,8 +260,12 @@ export function ChemicalBulkUploadPage() {
           attachAsSamples(id, [])
         }
       }
-      // Single audit entry for the whole batch (was N writes → N re-renders)
-      addLog({ userId: user?.name ?? 'chemical', action: 'chemical_submitted', entityType: 'HEAT_RECORD', after: { count: reportsWritten, heats: [...new Set(valid.map((v) => v.heatCode))] } })
+      addLog({
+        userId: user?.name ?? 'chemical',
+        action: 'chemical_submitted',
+        entityType: 'HEAT_RECORD',
+        after: { count: reportsWritten, heats: [...new Set(valid.map((v) => v.heatCode))] },
+      })
       toast.success(`${reportsWritten} report(s) in ${groups.size} heat(s) submitted — Micro, Tensile, Hardness notified`)
       setItems((arr) => arr.filter((i) => !valid.some((v) => v.id === i.id)))
     } finally {
@@ -188,19 +275,56 @@ export function ChemicalBulkUploadPage() {
 
   return (
     <div>
-      <PageHeader title="Bulk Chemical Upload" description="Upload 10, 20, 50, 60+ PDFs at once. Each file is auto-matched to its Heat Code."
-        actions={<Button onClick={() => inputRef.current?.click()} disabled={processing}>{processing ? 'Processing…' : 'Select PDFs'}</Button>} />
-      <input ref={inputRef} type="file" multiple accept=".pdf,.bmp,.png,.jpg,.jpeg" className="hidden" onChange={(e) => { if (e.target.files) onFiles(e.target.files); e.target.value = '' }} />
-      <Card className="cursor-pointer border-dashed" onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onFiles(e.dataTransfer.files) }}>
+      <PageHeader
+        title="Bulk Chemical Upload"
+        description="Upload 10, 20, 50+ PDFs at once. Each file is auto-matched to its Heat Code and editable directly on the page."
+        actions={
+          <Button onClick={() => inputRef.current?.click()} disabled={processing}>
+            {processing ? 'Processing…' : 'Select PDFs'}
+          </Button>
+        }
+      />
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept=".pdf,.bmp,.png,.jpg,.jpeg"
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files) onFiles(e.target.files)
+          e.target.value = ''
+        }}
+      />
+      <Card
+        className="cursor-pointer border-dashed"
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          onFiles(e.dataTransfer.files)
+        }}
+      >
         <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Drag &amp; drop chemical PDFs here, or click to browse. Queued → Uploading → Processing → Extracted info → Auto-match → Review → Submit.
+          Drag &amp; drop chemical PDFs here, or click to browse. Files are parsed automatically and rendered for inline review below.
         </CardContent>
       </Card>
       <div className="mt-4">
-        <BulkReviewTable items={items} onChange={patch}
-          onAcceptAll={() => setItems((arr) => arr.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)))}
-          onSubmitAll={submitAll} submitting={submitting} onRetry={retryOne} />
+        <BulkReviewTable
+          items={items}
+          onChange={patch}
+          onAcceptAll={() =>
+            setItems((arr) =>
+              arr.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)),
+            )
+          }
+          onSubmitAll={submitAll}
+          onSubmitOne={(id) => {
+            const it = items.find((i) => i.id === id)
+            if (it) submitSingleReport(it)
+          }}
+          submitting={submitting}
+          onRetry={retryOne}
+        />
       </div>
     </div>
   )

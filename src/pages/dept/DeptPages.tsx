@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/PageHeader'
@@ -31,34 +31,87 @@ export function DeptDashboardPage({ dept }: { dept: 'micro' | 'tensile' | 'hardn
     const query = q.toLowerCase().trim()
     return heats.filter((h) => !query || `${h.heatCode} ${h.sapNo}`.toLowerCase().includes(query))
   }, [heats, q])
+
   if (!hydrated) return <LoadingPage label={`Loading ${cfg.label}…`} />
   const pending = heats.filter((h) => deptStateForHeat(h, cfg.key as DeptKey) !== 'COMPLETED').length
+
   return (
     <div>
-      <PageHeader title={cfg.label} description={`Pending heats created by Chemical. Upload ${cfg.sectionName} reports — single or bulk.`}
-        actions={<><LoadLabDemoButton /><Button asChild><Link to={`${cfg.home}/upload`}>Upload Reports</Link></Button></>} />
+      <PageHeader
+        title={cfg.label}
+        description={`Pending heats awaiting ${cfg.sectionName} test reports. Single and Bulk upload supported.`}
+        actions={
+          <>
+            <LoadLabDemoButton />
+            <Button asChild>
+              <Link to={`${cfg.home}/upload`}>Bulk Upload Reports</Link>
+            </Button>
+          </>
+        }
+      />
       <div className="grid gap-4 sm:grid-cols-3">
-        {[{ label: 'Pending Requests', value: pending }, { label: 'Completed', value: heats.length - pending }, { label: 'Total Heats', value: heats.length }].map((k) => (
-          <Card key={k.label}><CardContent className="p-4"><div className="text-2xl font-semibold">{k.value}</div><div className="text-sm text-muted-foreground">{k.label}</div></CardContent></Card>
+        {[
+          { label: 'Pending Requests', value: pending },
+          { label: 'Completed', value: heats.length - pending },
+          { label: 'Total Heats', value: heats.length },
+        ].map((k) => (
+          <Card key={k.label}>
+            <CardContent className="p-4">
+              <div className="text-2xl font-semibold">{k.value}</div>
+              <div className="text-sm text-muted-foreground">{k.label}</div>
+            </CardContent>
+          </Card>
         ))}
       </div>
-      <div className="mt-4"><Input placeholder="Search Heat Code or SAP…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-sm" /></div>
-      <Card className="mt-3"><CardContent className="p-0">
-        <Table>
-          <TableHeader><TableRow><TableHead>Heat Code</TableHead><TableHead>SAP Code</TableHead><TableHead>{cfg.sectionName} status</TableHead><TableHead>Action</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {list.slice(0, 50).map((h) => (
-              <TableRow key={h.id}>
-                <TableCell className="font-mono font-medium">{h.heatCode}</TableCell>
-                <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
-                <TableCell><DeptBadge value={deptStateForHeat(h, cfg.key as DeptKey)} /></TableCell>
-                <TableCell><Button size="sm" variant="outline" asChild><Link to={`${cfg.home}/upload?heat=${encodeURIComponent(h.heatCode)}`}>Upload</Link></Button></TableCell>
+
+      <div className="mt-4">
+        <Input
+          placeholder="Search Heat Code or SAP…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+
+      <Card className="mt-3">
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Heat Code</TableHead>
+                <TableHead>SAP Code</TableHead>
+                <TableHead>{cfg.sectionName} Status</TableHead>
+                <TableHead>Action</TableHead>
               </TableRow>
-            ))}
-            {list.length === 0 ? <TableRow><TableCell colSpan={4} className="py-8 text-center text-muted-foreground">No heats yet — Chemical creates them first.</TableCell></TableRow> : null}
-          </TableBody>
-        </Table>
-      </CardContent></Card>
+            </TableHeader>
+            <TableBody>
+              {list.slice(0, 50).map((h) => (
+                <TableRow key={h.id}>
+                  <TableCell className="font-mono font-medium">{h.heatCode}</TableCell>
+                  <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
+                  <TableCell>
+                    <DeptBadge value={deptStateForHeat(h, cfg.key as DeptKey)} />
+                  </TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link to={`${cfg.home}/upload?heat=${encodeURIComponent(h.heatCode)}`}>
+                        Upload &amp; Review
+                      </Link>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {list.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                    No heats yet — Chemical or QA creates heats first.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -73,58 +126,149 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
   const [singleHeat, setSingleHeat] = useState(preselect)
   const user = useAuthStore((s) => s.user)
   const addLog = useAuditStore((s) => s.addLog)
-  const patch = (id: string, p: Partial<IngestItem>) => setItems((arr) => arr.map((i) => (i.id === id ? { ...i, ...p } : i)))
 
-  // Fresh snapshot readable inside the async queue loop.
+  const allHeats = useHeatRecordStore((s) => s.heatRecords)
+  const masters = useProductMasterStore((s) => s.masters)
+
+  // Extract all currently pending heats for this department
+  const pendingHeats = useMemo(() => {
+    return allHeats
+      .filter((h) => deptStateForHeat(h, cfg.key as DeptKey) !== 'COMPLETED')
+      .map((h) => {
+        const m = masters.find((master) => master.sapNo.toLowerCase() === h.sapNo.toLowerCase())
+        return {
+          heatCode: h.heatCode,
+          sapNo: h.sapNo,
+          partName: m?.description,
+        }
+      })
+  }, [allHeats, cfg.key, masters])
+
+  const patch = (id: string, p: Partial<IngestItem>) =>
+    setItems((arr) => arr.map((i) => (i.id === id ? { ...i, ...p } : i)))
+
   const itemsRef = useRef(items)
   itemsRef.current = items
+
+  const singleHeatRef = useRef(singleHeat)
+  singleHeatRef.current = singleHeat
+
+  const pendingHeatsRef = useRef(pendingHeats)
+  pendingHeatsRef.current = pendingHeats
 
   const takenLabelsOf = (sap: string, heat: string) =>
     useHeatRecordStore.getState().heatRecords.find(
       (h) => h.sapNo.toUpperCase() === sap && h.heatCode.toUpperCase() === heat,
     )?.heats.map((s) => s.label) ?? []
 
-  // Live Sample A/B/C preview: regroup whenever SAP/heat/status change.
+  // Live Sample A/B/C preview: regroup whenever SAP/heat/status change
   const signature = items.map((i) => `${i.id}:${i.sapCode}:${i.heatCode}:${i.status}:${i.assignedSample ?? ''}`).join('|')
   useEffect(() => {
     setItems((prev) => assignPreviewSamples(prev, takenLabelsOf))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature])
 
-  /** Sequential queue: one file processes (~10s), the rest wait as QUEUED. */
+  /** Sequential queue: process files one by one with fallback matching */
   const runQueue = async (ids: string[]) => {
     setProcessing(true)
-    const masters = useProductMasterStore.getState().masters
+    const currentMasters = useProductMasterStore.getState().masters
     for (const id of ids) {
       const current = itemsRef.current.find((i) => i.id === id)
       if (!current) continue
-      const out = await processQueuedFile(current.file, cfg.key, masters, (p) => patch(id, p))
-      const forced = singleHeatRef.current || preselect
-      patch(id, forced
-        ? { ...out, heatCode: forced.toUpperCase(), status: out.status === 'FAILED' ? 'FAILED' : 'MATCHED' as const, progress: 100, stage: undefined }
-        : { ...out, progress: 100, stage: undefined })
+
+      const out = await processQueuedFile(current.file, cfg.key, currentMasters, (p) => patch(id, p))
+
+      // Intelligent match with active pending heats if parser didn't find an exact ID
+      let matchedHeat = singleHeatRef.current || preselect
+      let matchedSap = ''
+
+      if (!matchedHeat) {
+        if (out.heatCode) {
+          const match = pendingHeatsRef.current.find(
+            (p) => p.heatCode.toUpperCase() === out.heatCode.toUpperCase(),
+          )
+          if (match) {
+            matchedHeat = match.heatCode
+            matchedSap = match.sapNo
+          }
+        }
+        // Substring / token matching in filename against pending heats
+        if (!matchedHeat) {
+          const fnUpper = current.file.name.toUpperCase()
+          for (const p of pendingHeatsRef.current) {
+            const cleanCode = p.heatCode.toUpperCase().replace(/[-_ ]/g, '')
+            const cleanFn = fnUpper.replace(/[-_ ]/g, '')
+            if (cleanFn.includes(cleanCode) || fnUpper.includes(p.heatCode.toUpperCase())) {
+              matchedHeat = p.heatCode
+              matchedSap = p.sapNo
+              break
+            }
+          }
+        }
+        // If there's only 1 pending heat, auto-match single upload
+        if (!matchedHeat && pendingHeatsRef.current.length === 1 && ids.length === 1) {
+          matchedHeat = pendingHeatsRef.current[0].heatCode
+          matchedSap = pendingHeatsRef.current[0].sapNo
+        }
+      }
+
+      const finalHeat = matchedHeat ? matchedHeat.toUpperCase() : out.heatCode
+      const finalSap = matchedSap || out.sapCode
+      const hasFinalHeat = Boolean(finalHeat)
+
+      patch(id, {
+        ...out,
+        heatCode: finalHeat,
+        sapCode: finalSap,
+        status: out.status === 'FAILED' ? 'FAILED' : hasFinalHeat ? 'MATCHED' : 'REVIEW_REQUIRED',
+        progress: 100,
+        stage: undefined,
+      })
     }
     setProcessing(false)
   }
 
-  const singleHeatRef = useRef(singleHeat)
-  singleHeatRef.current = singleHeat
-
   const onFiles = async (files: FileList | File[]) => {
     const list = Array.from(files)
     if (list.length === 0) return
-    const fresh: IngestItem[] = list.map((f, i) => ({
-      id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`, file: f, progress: 0, status: 'QUEUED',
-      queueLabel: 'Waiting in queue',
-      sapCode: '', heatCode: (singleHeatRef.current || preselect).toUpperCase(),
-      confidence: 0, message: 'Waiting in queue…', values: [], valueSource: {},
-    }))
+
+    const fresh: IngestItem[] = list.map((f, i) => {
+      let initialHeat = (singleHeatRef.current || preselect).toUpperCase()
+      let initialSap = ''
+      if (!initialHeat) {
+        const fnUpper = f.name.toUpperCase()
+        for (const p of pendingHeatsRef.current) {
+          if (fnUpper.includes(p.heatCode.toUpperCase())) {
+            initialHeat = p.heatCode
+            initialSap = p.sapNo
+            break
+          }
+        }
+      }
+
+      return {
+        id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+        file: f,
+        progress: 0,
+        status: 'QUEUED',
+        queueLabel: 'Waiting in queue',
+        sapCode: initialSap,
+        heatCode: initialHeat,
+        confidence: 0,
+        message: 'Waiting in queue…',
+        values: [],
+        valueSource: {},
+      }
+    })
+
     setItems((arr) => [...arr, ...fresh])
     setTimeout(() => {
-      const pending = itemsRef.current.filter((i) => i.status === 'QUEUED' || i.status === 'FAILED').map((i) => i.id)
+      const pending = itemsRef.current
+        .filter((i) => i.status === 'QUEUED' || i.status === 'FAILED')
+        .map((i) => i.id)
       if (pending.length > 0) void runQueue(pending)
     }, 50)
-    toast.success(`${list.length} file(s) queued — processing one by one (~10s each)`)
+    toast.success(`${list.length} file(s) queued — processing and matching to pending heats`)
   }
 
   const retryOne = (id: string) => {
@@ -132,39 +276,118 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
     setTimeout(() => { void runQueue([id]) }, 50)
   }
 
+  const submitSingleReport = (itemToSubmit: IngestItem) => {
+    if (!itemToSubmit.heatCode) {
+      toast.error('Please assign a target Heat Code before submitting.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const now = nowIso()
+      const st = useHeatRecordStore.getState()
+      const heatCode = itemToSubmit.heatCode
+      const sapCode = (itemToSubmit.sapCode || '').toLowerCase()
+      const heat = st.heatRecords.find(
+        (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() &&
+          (!sapCode || h.sapNo.toLowerCase() === sapCode),
+      )
+      if (!heat) {
+        toast.error(`Heat "${heatCode}" not found in system. Create the heat record first.`)
+        return
+      }
+
+      const storedKey = `${dept}-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      void saveReportBlob(storedKey, itemToSubmit.file).catch(() => {})
+
+      const report = {
+        id: createId(),
+        sectionKey: cfg.key,
+        sectionName: cfg.sectionName,
+        parsedValues: itemToSubmit.values.length > 0 ? itemToSubmit.values : [{ name: 'Result', value: 'As per report' }],
+        confirmed: true,
+        warnings: itemToSubmit.result?.warnings ?? [],
+        fileMetadata: {
+          fileName: itemToSubmit.file.name,
+          fileSize: itemToSubmit.file.size,
+          mimeType: itemToSubmit.file.type,
+          storedKey,
+        },
+        uploadedBy: user?.name,
+        uploadedAt: now,
+        status: 'COMPLETE' as const,
+      }
+
+      st.upsertReportData(heat.id, report)
+
+      // Mark request as reviewed
+      const req = (heat.requests ?? []).find((r) => r.sectionKey === cfg.key)
+      if (req) {
+        useHeatRecordStore.setState((prev) => ({
+          heatRecords: prev.heatRecords.map((h) =>
+            h.id === heat.id
+              ? { ...h, requests: h.requests.map((r) => (r.id === req.id ? { ...r, status: 'REVIEWED' as const } : r)) }
+              : h,
+          ),
+        }))
+      }
+
+      addLog({
+        userId: user?.name ?? dept,
+        action: `${dept}_report_submitted`,
+        entityType: 'HEAT_RECORD',
+        entityId: heat.id,
+        after: { fileName: itemToSubmit.file.name, heatCode },
+      })
+
+      toast.success(`${cfg.sectionName} report for ${heatCode} successfully submitted!`)
+      setItems((arr) => arr.filter((i) => i.id !== itemToSubmit.id))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   const submitAll = async () => {
     const valid = itemsRef.current.filter((i) => i.heatCode && (i.status === 'MATCHED' || i.status === 'REVIEW_REQUIRED'))
-    if (valid.length === 0) { toast.error('Set the Heat Code for at least one processed file'); return }
+    if (valid.length === 0) {
+      toast.error('Select target Heat Codes for at least one processed file')
+      return
+    }
     setSubmitting(true)
     try {
       let ok = 0
-      // Group by (SAP, heat). Unique = heat-level report.
-      // Repeats sharing SAP + heat: Report 1 -> Sample A, Report 2 -> B, …
       const groups = groupBySapHeat(valid, (i) => i.sapCode, (i) => i.heatCode)
       for (const [, group] of groups) {
         const now = nowIso()
         const st = useHeatRecordStore.getState()
         const heatCode = group[0].heatCode
         const sapCode = (group[0].sapCode || '').toLowerCase()
-        const heat = st.heatRecords.find((h) =>
-          h.heatCode.toLowerCase() === heatCode.toLowerCase() &&
-          (!sapCode || h.sapNo.toLowerCase() === sapCode),
+        const heat = st.heatRecords.find(
+          (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() &&
+            (!sapCode || h.sapNo.toLowerCase() === sapCode),
         )
-        if (!heat) { toast.error(`${heatCode}: heat not found — ask Chemical to create it first`); continue }
+        if (!heat) {
+          toast.error(`${heatCode}: heat not found in system`)
+          continue
+        }
+
         const makeDeptReport = (it: IngestItem, sampleId?: string, sampleLabel?: string) => {
           const storedKey = `${dept}-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-          void saveReportBlob(storedKey, it.file).catch(() => { /* ignore */ })
+          void saveReportBlob(storedKey, it.file).catch(() => {})
           return {
-            id: createId(), sectionKey: cfg.key, sectionName: cfg.sectionName,
+            id: createId(),
+            sectionKey: cfg.key,
+            sectionName: cfg.sectionName,
             ...(sampleId ? { sampleId, sampleLabel } : {}),
             parsedValues: it.values.length > 0 ? it.values : [{ name: 'Result', value: 'As per report' }],
-            confirmed: true, warnings: it.result?.warnings ?? [],
+            confirmed: true,
+            warnings: it.result?.warnings ?? [],
             fileMetadata: { fileName: it.file.name, fileSize: it.file.size, mimeType: it.file.type, storedKey },
-            uploadedBy: user?.name, uploadedAt: now, status: 'COMPLETE' as const,
+            uploadedBy: user?.name,
+            uploadedAt: now,
+            status: 'COMPLETE' as const,
           }
         }
-        // Unique report -> heat level; repeats -> every report becomes a sample.
-        // Reuse the previewed letters so review == saved.
+
         let sampleIds: Array<{ id: string; label: string }> = []
         if (group.length > 1) {
           const fresh = useHeatRecordStore.getState().heatRecords.find((h) => h.id === heat.id)!
@@ -173,25 +396,35 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
           st.updateHeatRecord(heat.id, {
             heats: [...fresh.heats, ...sampleIds.map((s) => ({ id: s.id, label: s.label, quantity: undefined }))],
           })
-          toast.success(`${heatCode}: saved as Sample ${labels.join(', ')}`)
+          toast.success(`${heatCode}: multiple files saved as Samples ${labels.join(', ')}`)
         }
+
         group.forEach((it, idx) => {
           const s = group.length > 1 ? sampleIds[idx] : undefined
           const report = makeDeptReport(it, s?.id, s?.label)
           useHeatRecordStore.getState().upsertReportData(heat.id, report)
           ok++
         })
+
         const req = (heat.requests ?? []).find((r) => r.sectionKey === cfg.key)
         if (req) {
           useHeatRecordStore.setState((prev) => ({
             heatRecords: prev.heatRecords.map((h) =>
-              h.id === heat.id ? { ...h, requests: h.requests.map((r) => (r.id === req.id ? { ...r, status: 'REVIEWED' as const } : r)) } : h,
+              h.id === heat.id
+                ? { ...h, requests: h.requests.map((r) => (r.id === req.id ? { ...r, status: 'REVIEWED' as const } : r)) }
+                : h,
             ),
           }))
         }
       }
-      addLog({ userId: user?.name ?? dept, action: `${dept}_submitted`, entityType: 'HEAT_RECORD', after: { count: ok } })
-      toast.success(`${ok} report(s) submitted`)
+
+      addLog({
+        userId: user?.name ?? dept,
+        action: `${dept}_submitted`,
+        entityType: 'HEAT_RECORD',
+        after: { count: ok },
+      })
+      toast.success(`${ok} report(s) submitted successfully`)
       setItems((arr) => arr.filter((i) => !valid.some((v) => v.id === i.id)))
     } finally {
       setSubmitting(false)
@@ -199,25 +432,110 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
   }
 
   return (
-    <div>
-      <PageHeader title={`${cfg.label} — Upload Reports`} description="Method 1: pick a heat + one file. Method 2: bulk-upload many files — auto-matched to heat codes. Files process one by one (~10s each)." />
-      <Card><CardContent className="flex flex-wrap items-center gap-2 p-4">
-        <Input placeholder="Heat Code for single upload (e.g. GZ-56)" value={singleHeat} onChange={(e) => setSingleHeat(e.target.value.toUpperCase())} className="max-w-xs font-mono" />
-        <label className="text-sm">
-          <input type="file" multiple accept=".pdf,.bmp,.png,.jpg,.jpeg" className="hidden" onChange={(e) => { if (e.target.files) onFiles(e.target.files); e.target.value = '' }} />
-          <Button asChild disabled={processing}><span>{processing ? 'Processing…' : 'Select files'}</span></Button>
-        </label>
-        <span className="text-xs text-muted-foreground">PDF, BMP, PNG, JPG/JPEG supported.</span>
-      </CardContent></Card>
-      <div className="mt-3 cursor-pointer rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground"
-        onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onFiles(e.dataTransfer.files) }}>
-        Drag &amp; drop {dept} reports here for bulk matching (10 / 20 / 50 / 60+ at once).
+    <div className="space-y-4">
+      <PageHeader
+        title={`${cfg.label} — Bulk Upload Reports`}
+        description={`Upload multiple PDF or image reports for ${cfg.sectionName}. Data is extracted automatically, matched to pending heats, and ready for review.`}
+      />
+
+      {/* Pending Heats Overview Banner */}
+      {pendingHeats.length > 0 ? (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm font-semibold flex items-center justify-between">
+              <span>Pending Heats in Queue ({pendingHeats.length})</span>
+              <span className="text-xs font-normal text-muted-foreground">Click a heat code to focus single upload</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-3 pt-0">
+            <div className="flex flex-wrap gap-1.5">
+              {pendingHeats.map((h) => (
+                <Button
+                  key={`${h.sapNo}-${h.heatCode}`}
+                  variant={singleHeat === h.heatCode ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 text-xs font-mono"
+                  onClick={() => setSingleHeat(singleHeat === h.heatCode ? '' : h.heatCode)}
+                >
+                  {h.heatCode}
+                  <span className="ml-1 text-[10px] text-muted-foreground font-sans">({h.sapNo})</span>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Upload Zone & Single Heat Pre-selector */}
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+          <div className="flex-1 min-w-[240px]">
+            <Input
+              placeholder="Optional: Target Heat Code (e.g. GZ-56)"
+              value={singleHeat}
+              onChange={(e) => setSingleHeat(e.target.value.toUpperCase())}
+              className="font-mono text-sm"
+            />
+          </div>
+          <label className="text-sm">
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.bmp,.png,.jpg,.jpeg"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) onFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <Button asChild disabled={processing}>
+              <span>{processing ? 'Processing Reports…' : 'Select Files to Upload'}</span>
+            </Button>
+          </label>
+          <span className="text-xs text-muted-foreground">PDF, BMP, PNG, JPG/JPEG supported.</span>
+        </CardContent>
+      </Card>
+
+      <div
+        className="cursor-pointer rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center transition-colors hover:border-primary/50 hover:bg-muted/50"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          onFiles(e.dataTransfer.files)
+        }}
+      >
+        <div className="text-sm font-medium text-foreground">
+          Drag &amp; drop {cfg.sectionName} reports here for bulk upload (10, 20, 50+ files)
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          System automatically reads values and matches against pending heats in queue.
+        </div>
       </div>
-      <div className="mt-4">
-        <BulkReviewTable items={items} onChange={patch}
-          onAcceptAll={() => setItems((a) => a.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)))}
-          onSubmitAll={submitAll} submitting={submitting} onRetry={retryOne} />
-      </div>
+
+      {/* Bulk Review & Submit Table */}
+      {items.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          <h3 className="text-sm font-semibold">Parsed Reports Ready for Review ({items.length})</h3>
+          <BulkReviewTable
+            items={items}
+            onChange={patch}
+            onAcceptAll={() =>
+              setItems((a) =>
+                a.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)),
+              )
+            }
+            onSubmitAll={submitAll}
+            onSubmitOne={(id) => {
+              const it = items.find((i) => i.id === id)
+              if (it) submitSingleReport(it)
+            }}
+            submitting={submitting}
+            onRetry={retryOne}
+            pendingHeats={pendingHeats}
+            sectionKey={cfg.key}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -228,24 +546,41 @@ export function DeptCompletedPage({ dept }: { dept: 'micro' | 'tensile' | 'hardn
   const heats = useHeatRecordStore((s) => s.heatRecords)
   if (!hydrated) return <LoadingPage label="Loading…" />
   const done = heats.filter((h) => deptStateForHeat(h, cfg.key as DeptKey) === 'COMPLETED')
+
   return (
     <div>
       <PageHeader title={`${cfg.label} — Completed`} description={`${done.length} heats completed.`} />
-      <Card><CardContent className="p-0">
-        <Table>
-          <TableHeader><TableRow><TableHead>Heat</TableHead><TableHead>SAP</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {done.map((h) => (
-              <TableRow key={h.id}>
-                <TableCell className="font-mono">{h.heatCode}</TableCell>
-                <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
-                <TableCell><DeptBadge value="COMPLETED" /></TableCell>
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Heat Code</TableHead>
+                <TableHead>SAP Code</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
-            ))}
-            {done.length === 0 ? <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">Nothing completed yet.</TableCell></TableRow> : null}
-          </TableBody>
-        </Table>
-      </CardContent></Card>
+            </TableHeader>
+            <TableBody>
+              {done.map((h) => (
+                <TableRow key={h.id}>
+                  <TableCell className="font-mono">{h.heatCode}</TableCell>
+                  <TableCell className="font-mono text-xs">{h.sapNo}</TableCell>
+                  <TableCell>
+                    <DeptBadge value="COMPLETED" />
+                  </TableCell>
+                </TableRow>
+              ))}
+              {done.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
+                    Nothing completed yet.
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   )
 }
