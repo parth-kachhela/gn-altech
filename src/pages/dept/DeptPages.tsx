@@ -8,6 +8,16 @@ import { PageHeader } from '@/components/PageHeader'
 import { BulkReviewTable } from '@/components/workflow/BulkReviewTable'
 import { DeptBadge } from '@/components/workflow/WorkflowBadges'
 import { LoadLabDemoButton } from '@/components/workflow/LoadLabDemoButton'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { processQueuedFile, type IngestItem } from '@/services/bulkIngest'
 import { useHeatRecordStore } from '@/stores/heatRecordStore'
 import { useProductMasterStore } from '@/stores/productMasterStore'
@@ -21,7 +31,8 @@ import { assignPreviewSamples, groupBySapHeat, resolveGroupLabels } from '@/lib/
 import { createId, nowIso } from '@/lib/id'
 import { toast } from 'sonner'
 import { DEPT_CONFIG } from '@/pages/dept/deptConfig'
-import { UploadCloud } from 'lucide-react'
+import { UploadCloud, AlertTriangle } from 'lucide-react'
+import type { HeatRecord, HeatReportData } from '@/types'
 
 export function DeptDashboardPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness' }) {
   const cfg = DEPT_CONFIG[dept]
@@ -128,6 +139,19 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
   const dropzoneInputRef = useRef<HTMLInputElement>(null)
   const user = useAuthStore((s) => s.user)
   const addLog = useAuditStore((s) => s.addLog)
+
+  // Conflict modal state
+  const [singleConflict, setSingleConflict] = useState<{
+    item: IngestItem
+    heat: HeatRecord
+    existingReport: HeatReportData
+    sampleLabel?: string
+  } | null>(null)
+
+  const [bulkConflict, setBulkConflict] = useState<{
+    conflicts: Array<{ item: IngestItem; heatCode: string; existingReport: HeatReportData; sampleLabel?: string }>
+    validItems: IngestItem[]
+  } | null>(null)
 
   const allHeats = useHeatRecordStore((s) => s.heatRecords)
   const masters = useProductMasterStore((s) => s.masters)
@@ -299,7 +323,7 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
     toast.success(`Replaced with ${newFile.name} — reprocessing`)
   }
 
-  const submitSingleReport = (itemToSubmit: IngestItem) => {
+  const executeSubmitSingle = (itemToSubmit: IngestItem, replaceExistingId?: string) => {
     if (!itemToSubmit.heatCode) {
       toast.error('Please assign a target Heat Code before submitting.')
       return
@@ -322,10 +346,12 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
       const storedKey = `${dept}-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
       void saveReportBlob(storedKey, itemToSubmit.file).catch(() => {})
 
-      const report = {
-        id: createId(),
+      const reportId = replaceExistingId || createId()
+      const report: HeatReportData = {
+        id: reportId,
         sectionKey: cfg.key,
         sectionName: cfg.sectionName,
+        ...(itemToSubmit.assignedSample ? { sampleLabel: itemToSubmit.assignedSample } : {}),
         parsedValues: itemToSubmit.values.length > 0 ? itemToSubmit.values : [{ name: 'Result', value: 'As per report' }],
         confirmed: true,
         warnings: itemToSubmit.result?.warnings ?? [],
@@ -356,29 +382,64 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
 
       addLog({
         userId: user?.name ?? dept,
-        action: `${dept}_report_submitted`,
+        action: replaceExistingId ? `${dept}_report_replaced` : `${dept}_report_submitted`,
         entityType: 'HEAT_RECORD',
         entityId: heat.id,
-        after: { fileName: itemToSubmit.file.name, heatCode },
+        after: { fileName: itemToSubmit.file.name, heatCode, replaced: Boolean(replaceExistingId) },
       })
 
-      toast.success(`${cfg.sectionName} report for ${heatCode} successfully submitted!`)
+      toast.success(
+        replaceExistingId
+          ? `Replaced existing ${cfg.sectionName} report for ${heatCode}!`
+          : `${cfg.sectionName} report for ${heatCode} successfully submitted!`
+      )
       setItems((arr) => arr.filter((i) => i.id !== itemToSubmit.id))
+      setSingleConflict(null)
     } finally {
       setSubmitting(false)
     }
   }
 
-  const submitAll = async () => {
-    const valid = itemsRef.current.filter((i) => i.heatCode && (i.status === 'MATCHED' || i.status === 'REVIEW_REQUIRED'))
-    if (valid.length === 0) {
-      toast.error('Select target Heat Codes for at least one processed file')
+  const handleRequestSubmitSingle = (itemToSubmit: IngestItem) => {
+    if (!itemToSubmit.heatCode) {
+      toast.error('Please assign a target Heat Code before submitting.')
       return
     }
+    const st = useHeatRecordStore.getState()
+    const heatCode = itemToSubmit.heatCode
+    const sapCode = (itemToSubmit.sapCode || '').toLowerCase()
+    const heat = st.heatRecords.find(
+      (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() &&
+        (!sapCode || h.sapNo.toLowerCase() === sapCode),
+    )
+    if (!heat) {
+      toast.error(`Heat "${heatCode}" not found in system. Create the heat record first.`)
+      return
+    }
+
+    // Check if report already exists for this heat
+    const existingReport = heat.reports.find(
+      (r) => r.sectionKey === cfg.key && (!itemToSubmit.assignedSample || r.sampleLabel === itemToSubmit.assignedSample)
+    )
+
+    if (existingReport) {
+      setSingleConflict({
+        item: itemToSubmit,
+        heat,
+        existingReport,
+        sampleLabel: itemToSubmit.assignedSample,
+      })
+      return
+    }
+
+    executeSubmitSingle(itemToSubmit)
+  }
+
+  const executeSubmitAll = async (validItems: IngestItem[]) => {
     setSubmitting(true)
     try {
       let ok = 0
-      const groups = groupBySapHeat(valid, (i) => i.sapCode, (i) => i.heatCode)
+      const groups = groupBySapHeat(validItems, (i) => i.sapCode, (i) => i.heatCode)
       for (const [, group] of groups) {
         const now = nowIso()
         const st = useHeatRecordStore.getState()
@@ -393,14 +454,14 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
           continue
         }
 
-        const makeDeptReport = (it: IngestItem, sampleId?: string, sampleLabel?: string) => {
+        const makeDeptReport = (it: IngestItem, existingId?: string, sampleId?: string, sampleLabel?: string) => {
           const storedKey = `${dept}-${heatCode}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
           void saveReportBlob(storedKey, it.file).catch(() => {})
           return {
-            id: createId(),
+            id: existingId || createId(),
             sectionKey: cfg.key,
             sectionName: cfg.sectionName,
-            ...(sampleId ? { sampleId, sampleLabel } : {}),
+            ...(sampleId ? { sampleId, sampleLabel } : sampleLabel ? { sampleLabel } : {}),
             parsedValues: it.values.length > 0 ? it.values : [{ name: 'Result', value: 'As per report' }],
             confirmed: true,
             warnings: it.result?.warnings ?? [],
@@ -424,7 +485,10 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
 
         group.forEach((it, idx) => {
           const s = group.length > 1 ? sampleIds[idx] : undefined
-          const report = makeDeptReport(it, s?.id, s?.label)
+          const existing = heat.reports.find(
+            (r) => r.sectionKey === cfg.key && (s ? r.sampleLabel === s.label : (!r.sampleLabel || r.sampleLabel === it.assignedSample))
+          )
+          const report = makeDeptReport(it, existing?.id, s?.id, s?.label || it.assignedSample)
           useHeatRecordStore.getState().upsertReportData(heat.id, report)
           ok++
         })
@@ -448,10 +512,51 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
         after: { count: ok },
       })
       toast.success(`${ok} report(s) submitted successfully`)
-      setItems((arr) => arr.filter((i) => !valid.some((v) => v.id === i.id)))
+      setItems((arr) => arr.filter((i) => !validItems.some((v) => v.id === i.id)))
+      setBulkConflict(null)
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleRequestSubmitAll = () => {
+    const valid = itemsRef.current.filter((i) => i.heatCode && (i.status === 'MATCHED' || i.status === 'REVIEW_REQUIRED'))
+    if (valid.length === 0) {
+      toast.error('Select target Heat Codes for at least one processed file')
+      return
+    }
+
+    const st = useHeatRecordStore.getState()
+    const conflicts: Array<{ item: IngestItem; heatCode: string; existingReport: HeatReportData; sampleLabel?: string }> = []
+
+    for (const it of valid) {
+      const heatCode = it.heatCode
+      const sapCode = (it.sapCode || '').toLowerCase()
+      const heat = st.heatRecords.find(
+        (h) => h.heatCode.toLowerCase() === heatCode.toLowerCase() &&
+          (!sapCode || h.sapNo.toLowerCase() === sapCode),
+      )
+      if (heat) {
+        const existing = heat.reports.find(
+          (r) => r.sectionKey === cfg.key && (!it.assignedSample || r.sampleLabel === it.assignedSample)
+        )
+        if (existing) {
+          conflicts.push({
+            item: it,
+            heatCode: heat.heatCode,
+            existingReport: existing,
+            sampleLabel: it.assignedSample,
+          })
+        }
+      }
+    }
+
+    if (conflicts.length > 0) {
+      setBulkConflict({ conflicts, validItems: valid })
+      return
+    }
+
+    void executeSubmitAll(valid)
   }
 
   return (
@@ -564,10 +669,10 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
                 a.map((i) => (i.status === 'REVIEW_REQUIRED' ? { ...i, status: 'MATCHED' as const } : i)),
               )
             }
-            onSubmitAll={submitAll}
+            onSubmitAll={handleRequestSubmitAll}
             onSubmitOne={(id) => {
               const it = items.find((i) => i.id === id)
-              if (it) submitSingleReport(it)
+              if (it) handleRequestSubmitSingle(it)
             }}
             onRemove={handleRemoveFile}
             onReplaceFile={handleReplaceFile}
@@ -578,6 +683,117 @@ export function DeptUploadPage({ dept }: { dept: 'micro' | 'tensile' | 'hardness
           />
         </div>
       ) : null}
+
+      {/* Single Report Conflict Alert Dialog */}
+      <AlertDialog
+        open={Boolean(singleConflict)}
+        onOpenChange={(open) => !open && setSingleConflict(null)}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              <AlertDialogTitle>Report Already Exists</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 pt-2 text-sm text-foreground">
+                <p>
+                  A <strong>{cfg.sectionName}</strong> report already exists for Heat Code{' '}
+                  <strong className="font-mono text-primary">{singleConflict?.heat.heatCode}</strong>
+                  {singleConflict?.sampleLabel ? (
+                    <span> (Sample <strong>{singleConflict.sampleLabel}</strong>)</span>
+                  ) : ''}.
+                </p>
+                <div className="rounded-md border bg-muted/40 p-2.5 text-xs space-y-1 font-mono">
+                  <div>
+                    <span className="text-muted-foreground font-sans">Current file: </span>
+                    <span className="font-semibold text-foreground">
+                      {singleConflict?.existingReport.fileMetadata?.fileName ?? 'Previous Report Attachment'}
+                    </span>
+                  </div>
+                  {singleConflict?.existingReport.uploadedAt ? (
+                    <div>
+                      <span className="text-muted-foreground font-sans">Uploaded on: </span>
+                      <span>{new Date(singleConflict.existingReport.uploadedAt).toLocaleString()}</span>
+                    </div>
+                  ) : null}
+                  <div>
+                    <span className="text-muted-foreground font-sans">New file: </span>
+                    <span className="font-semibold text-primary">{singleConflict?.item.file.name}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Do you want to <strong>replace</strong> the existing report with this new file, or <strong>cancel</strong>?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700 text-white font-medium"
+              onClick={() => {
+                if (singleConflict) {
+                  executeSubmitSingle(singleConflict.item, singleConflict.existingReport.id)
+                }
+              }}
+            >
+              Replace Report
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Conflicts Alert Dialog */}
+      <AlertDialog
+        open={Boolean(bulkConflict)}
+        onOpenChange={(open) => !open && setBulkConflict(null)}
+      >
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              <AlertDialogTitle>Existing Reports Detected ({bulkConflict?.conflicts.length})</AlertDialogTitle>
+            </div>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 pt-2 text-sm text-foreground">
+                <p>
+                  <strong>{bulkConflict?.conflicts.length}</strong> of the {bulkConflict?.validItems.length} reports in this batch already have existing data for their respective Heat Codes:
+                </p>
+                <div className="max-h-48 overflow-y-auto rounded-md border bg-muted/40 p-2 text-xs space-y-1.5 font-mono">
+                  {bulkConflict?.conflicts.map((c, i) => (
+                    <div key={i} className="flex items-center justify-between border-b pb-1 last:border-b-0">
+                      <div>
+                        <span className="font-bold text-foreground">{c.heatCode}</span>
+                        {c.sampleLabel ? <span className="ml-1 text-primary">({c.sampleLabel})</span> : ''}
+                      </div>
+                      <span className="text-muted-foreground truncate max-w-[220px]" title={c.item.file.name}>
+                        {c.item.file.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Do you want to <strong>replace all existing reports</strong> with the new uploads, or <strong>cancel</strong> to review?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700 text-white font-medium"
+              onClick={() => {
+                if (bulkConflict) {
+                  void executeSubmitAll(bulkConflict.validItems)
+                }
+              }}
+            >
+              Replace All Existing
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
