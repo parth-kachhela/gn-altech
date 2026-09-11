@@ -1,12 +1,5 @@
-import { parseMasterWorkbook } from '@/services/masterImport'
-import { useProductMasterStore } from '@/stores/productMasterStore'
-import { useHeatRecordStore } from '@/stores/heatRecordStore'
-import { useCertificateStore } from '@/stores/certificateStore'
+import { seedDeptDemo } from '@/data/deptDemoSeed'
 import { useAuditStore } from '@/stores/auditStore'
-import { useUsersStore } from '@/stores/usersStore'
-import { departmentForSectionKey } from '@/lib/permissions'
-import { createId, nowIso } from '@/lib/id'
-import type { HeatReportRequest } from '@/types'
 
 const DEMO_WORKBOOK_URL = `${import.meta.env.BASE_URL}demo-data/GN_Altech_Demo_Master.xlsx`
 
@@ -26,84 +19,21 @@ export async function fetchDemoWorkbook(): Promise<ArrayBuffer> {
 
 /**
  * Completely clears database state (masters, heats, certificates) and reseeds
- * fresh product masters from Master.xlsx and initial clean heats.
+ * genuine product masters from Master.xlsx and varied demo heats with samples A/B/C/D.
  */
 export async function cleanAndReseedMaster(userName = 'Admin'): Promise<{ mastersCount: number; heatsCount: number }> {
-  // 1. Clear existing records
-  useUsersStore.getState().seedDefaultAccounts()
-  useHeatRecordStore.setState({ heatRecords: [] })
-  useCertificateStore.setState({ certificates: [] })
-  useProductMasterStore.setState({ masters: [] })
-
-  // 2. Fetch and parse fresh Master.xlsx
-  const buffer = await fetchDemoWorkbook()
-  const result = parseMasterWorkbook(buffer, [])
-
-  // 3. Save all product masters
-  for (const master of result.masters) {
-    useProductMasterStore.getState().saveMaster({
-      ...master,
-      revision: 1,
-      status: 'ACTIVE',
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-    })
-  }
-
-  // 4. Create fresh pending heats for the 4 lab reports
-  const pendingHeats = [
-    { sap: 'PR01CI0459CA', heat: 'G6E' },
-    { sap: 'PR01CI0459CA', heat: 'GZ-56' },
-    { sap: 'PR01CI0459CA', heat: 'GZ-1026' },
-  ]
-
-  const FOUR_SECTIONS = ['CHEMICAL', 'MICRO', 'TENSILE', 'HARDNESS'] as const
-  const SECTION_NAMES: Record<string, string> = {
-    CHEMICAL: 'Chemical Analysis',
-    MICRO: 'Micro Structure',
-    TENSILE: 'Tensile',
-    HARDNESS: 'Hardness',
-  }
-
-  for (const ph of pendingHeats) {
-    const id = useHeatRecordStore.getState().addHeatRecord({
-      sapNo: ph.sap,
-      heatCode: ph.heat,
-      heats: [],
-      demoReports: {},
-    })
-
-    const requests: HeatReportRequest[] = FOUR_SECTIONS.map((secKey) => ({
-      id: createId(),
-      sectionKey: secKey,
-      sectionName: SECTION_NAMES[secKey],
-      department: departmentForSectionKey(secKey),
-      status: 'PENDING',
-    }))
-
-    useHeatRecordStore.setState((prev) => ({
-      heatRecords: prev.heatRecords.map((h) =>
-        h.id === id
-          ? {
-              ...h,
-              requests,
-              reports: [],
-            }
-          : h,
-      ),
-    }))
-  }
+  const result = seedDeptDemo(userName)
 
   useAuditStore.getState().addLog({
     userId: userName,
     action: 'database_cleaned_and_reseeded',
     entityType: 'PRODUCT_MASTER',
-    after: { masters: result.masters.length, heats: pendingHeats.length },
+    after: { masters: result.masters, heats: result.heats },
   })
 
   return {
-    mastersCount: result.masters.length,
-    heatsCount: pendingHeats.length,
+    mastersCount: result.masters,
+    heatsCount: result.heats,
   }
 }
 
